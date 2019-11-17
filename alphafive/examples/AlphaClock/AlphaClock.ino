@@ -905,6 +905,54 @@ void DisplayWordSequence (byte sequence)
     else
       wordSequence = 0;
     break;    
+  case 10:    //Say "HELLO" "GRACE" "ANNA"
+    if (wordSequenceStep == 1)
+      DisplayWord ("HELLO", 1000);
+    else if (wordSequenceStep == 3)
+      DisplayWord ("GRACE", 800);
+    else if (wordSequenceStep == 5)
+      DisplayWord (" ANNA", 800);
+    else if (wordSequenceStep < 7)
+      DisplayWord ("     ", 300);
+    else
+      wordSequence = 0;
+    break;
+  case 11:    //Say "HAPPY" "ANNI-" "VRSRY"
+    if (wordSequenceStep < 3)
+      DisplayWord ("HAPPY", 800);
+    else if (wordSequenceStep < 5)
+      DisplayWord ("ANNI-", 800);
+    else if (wordSequenceStep < 7)
+      DisplayWord ("VRSRY", 800);
+    else
+      wordSequence = 0;
+    break;
+  case 12:    //Say "HAPPY" "B-DAY"
+    if (wordSequenceStep < 3)
+      DisplayWord ("HAPPY", 800);
+    else if (wordSequenceStep < 5)
+      DisplayWord ("B-DAY", 800);
+    else
+      wordSequence = 0;
+    break;
+  case 13:    //Say "HAPPY" "NEW" "YEAR"
+    if (wordSequenceStep < 3)
+      DisplayWord ("HAPPY", 800);
+    else if (wordSequenceStep < 5)
+      DisplayWord (" NEW ", 800);
+    else if (wordSequenceStep < 7)
+      DisplayWord ("YEAR ", 800);
+    else
+      wordSequence = 0;
+    break;
+  case 14:    //Say "MERRY" "X-MAS"
+    if (wordSequenceStep < 3)
+      DisplayWord ("MERRY", 800);
+    else if (wordSequenceStep < 5)
+      DisplayWord ("X-MAS", 800);
+    else
+      wordSequence = 0;
+    break;
 
 
 
@@ -943,6 +991,24 @@ void DisplayWordDP (char WordIn[])
   dpCache[2] = WordIn[2];
   dpCache[3] = WordIn[3];
   dpCache[4] = WordIn[4];
+}
+
+
+
+void SpecialOccasionMessage()
+{
+  if (second() % 20 == 0) {
+    if (month() == 7 && day() == 18)
+      DisplayWordSequence(11);  // Happy anniversary!
+    else if (month() == 9 && day() == 5)
+      DisplayWordSequence(12);  // Happy birthday!
+    
+    // generic holidays go after the relationship-specific ones
+    else if (month() == 1 && day() == 1)
+      DisplayWordSequence(13);  // Happy new year!
+//    else if (month() == 12 && day() == 25)
+//      DisplayWordSequence(14);  // Merry Christmas!
+  }
 }
 
 
@@ -1030,7 +1096,7 @@ void setup() {
 
 
 
-  DisplayWordSequence(1);  // Display: Hello world
+  DisplayWordSequence(10);  // Display: Hello Graceanna
 
   buttonMonitor = a5GetButtons(); 
   if (( buttonMonitor & a5_alarmSetBtn) && ( buttonMonitor & a5_timeSetBtn))
@@ -1783,6 +1849,8 @@ void UpdateDisplay (byte forceUpdate) {
     }
     else 
       TimeDisplay(DisplayMode, forceUpdate);
+      
+    SpecialOccasionMessage();
 
   }
 }
