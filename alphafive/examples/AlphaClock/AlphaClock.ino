@@ -945,7 +945,24 @@ void DisplayWordSequence (byte sequence)
     else
       wordSequence = 0;
     break;
-  case 14:    //Say "MERRY" "X-MAS"
+  case 14:    //Say "HAPPY" "4TH"
+    if (wordSequenceStep < 3)
+      DisplayWord ("HAPPY", 800);
+    else if (wordSequenceStep < 5)
+      DisplayWord (" 4TH ", 800);
+    else
+      wordSequence = 0;
+    break;
+  case 15:    //Say "HAPPY" "THNKS" "GVING"
+    if (wordSequenceStep < 3)
+      DisplayWord ("HAPPY", 800);
+    else if (wordSequenceStep < 5)
+      DisplayWord ("THNKS", 800);
+    else if (wordSequenceStep < 7)
+      DisplayWord ("GVING", 800);
+    else
+      wordSequence = 0;
+  case 16:    //Say "MERRY" "X-MAS"
     if (wordSequenceStep < 3)
       DisplayWord ("MERRY", 800);
     else if (wordSequenceStep < 5)
@@ -998,6 +1015,7 @@ void DisplayWordDP (char WordIn[])
 void SpecialOccasionMessage()
 {
   if (second() % 20 == 0) {
+    // relationship-specific messages
     if (month() == 7 && day() == 18)
       DisplayWordSequence(11);  // Happy anniversary!
     else if (month() == 9 && day() == 5)
@@ -1006,8 +1024,12 @@ void SpecialOccasionMessage()
     // generic holidays go after the relationship-specific ones
     else if (month() == 1 && day() == 1)
       DisplayWordSequence(13);  // Happy new year!
-//    else if (month() == 12 && day() == 25)
-//      DisplayWordSequence(14);  // Merry Christmas!
+    // else if (month() == 7 && day() == 4)
+    //   DisplayWordSequence(14);  // Merry Christmas!
+    // else if (month() == 11 && weekday() == 5 && day() >= 22 && day <= 28)
+    //   DisplayWordSequence(15);  // Happy Thanksgiving!
+    // else if (month() == 12 && day() == 25)
+    //   DisplayWordSequence(16);  // Merry Christmas!
   }
 }
 
