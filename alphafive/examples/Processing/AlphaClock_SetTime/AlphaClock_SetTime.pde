@@ -11,10 +11,11 @@
  */
 
 import processing.serial.*;
+import java.util.*;
 
 Serial myPort;     // Create object from Serial class
 
-public static final short portIndex = 4;  // select the com port, 0 is the first port
+public static final short portIndex = 1;  // select the com port, 0 is the first port
 
 
 public static final short LF = 10;     // ASCII linefeed
