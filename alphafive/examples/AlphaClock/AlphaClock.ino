@@ -909,9 +909,9 @@ void DisplayWordSequence (byte sequence)
     if (wordSequenceStep == 1)
       DisplayWord ("HELLO", 1000);
     else if (wordSequenceStep == 3)
-      DisplayWord ("GRACE", 800);
+      DisplayWord ("GRACE", 700);
     else if (wordSequenceStep == 5)
-      DisplayWord (" ANNA", 800);
+      DisplayWord ("ANNA ", 700);
     else if (wordSequenceStep < 7)
       DisplayWord ("     ", 300);
     else
