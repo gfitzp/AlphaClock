@@ -109,8 +109,10 @@ For additional requirements, please see:
 #define a5AlarmMinDefault 30
 #define a5NightLightTypeDefault 0
 #define a5AlarmToneDefault 2
-#define a5NumberCharSetDefault 2;
-#define a5DisplayModeDefault 0;
+#define a5NumberCharSetDefault 2
+#define a5DisplayModeDefault 0
+#define BIRTHDAY_MONTH 8
+#define BIRTHDAY_DAY 3
 
 // Clock mode variables
 
@@ -905,14 +907,12 @@ void DisplayWordSequence (byte sequence)
     else
       wordSequence = 0;
     break;    
-  case 10:    //Say "HELLO" "GRACE" "ANNA"
+  case 10:    //Say "HELLO" "GLENN"
     if (wordSequenceStep == 1)
-      DisplayWord ("HELLO", 1000);
+      DisplayWord ("HELLO", 800);
     else if (wordSequenceStep == 3)
-      DisplayWord ("GRACE", 700);
-    else if (wordSequenceStep == 5)
-      DisplayWord ("ANNA ", 700);
-    else if (wordSequenceStep < 7)
+      DisplayWord ("GLENN", 800);
+    else if (wordSequenceStep < 5)
       DisplayWord ("     ", 300);
     else
       wordSequence = 0;
@@ -1014,14 +1014,12 @@ void DisplayWordDP (char WordIn[])
 
 void SpecialOccasionMessage()
 {
-  if (second() % 20 == 0) {
-    // relationship-specific messages
-    if (month() == 7 && day() == 18)
-      DisplayWordSequence(11);  // Happy anniversary!
-    else if (month() == 9 && day() == 5)
+  if (second() % 20 == 0 && hour() < 12) {
+    // personal messages
+    if (month() == BIRTHDAY_MONTH && day() == BIRTHDAY_DAY)
       DisplayWordSequence(12);  // Happy birthday!
     
-    // generic holidays go after the relationship-specific ones
+    // generic holidays go after the personal ones
     else if (month() == 1 && day() == 1)
       DisplayWordSequence(13);  // Happy new year!
     // else if (month() == 7 && day() == 4)
