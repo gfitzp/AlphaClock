@@ -111,6 +111,7 @@ For additional requirements, please see:
 #define a5AlarmToneDefault 2
 #define a5NumberCharSetDefault 2
 #define a5DisplayModeDefault 0
+#define USERNAME "GLENN"
 #define BIRTHDAY_MONTH 8
 #define BIRTHDAY_DAY 3
 
@@ -908,11 +909,13 @@ void DisplayWordSequence (byte sequence)
       wordSequence = 0;
     break;
   case 10:    //Say "HELLO" "GLENN"
-    if (wordSequenceStep == 1)
-      DisplayWord ("HELLO", 800);
-    else if (wordSequenceStep == 3)
-      DisplayWord ("GLENN", 800);
+    if (wordSequenceStep < 3)
+      DisplayWord ("HELLO", 800); // not sure why I need to say hello twice for it to show up once, but whatever gets the job done...
     else if (wordSequenceStep < 5)
+      DisplayWord ("HELLO", 800);
+    else if (wordSequenceStep < 7)
+      DisplayWord (USERNAME, 800);
+    else if (wordSequenceStep < 9)
       DisplayWord ("     ", 300);
     else
       wordSequence = 0;
@@ -927,11 +930,13 @@ void DisplayWordSequence (byte sequence)
     else
       wordSequence = 0;
     break;
-  case 12:    //Say "HAPPY" "B-DAY"
+  case 12:    //Say "HAPPY" "B-DAY" "GLENN"
     if (wordSequenceStep < 3)
       DisplayWord ("HAPPY", 800);
     else if (wordSequenceStep < 5)
       DisplayWord ("B-DAY", 800);
+    else if (wordSequenceStep < 7)
+      DisplayWord (USERNAME, 800);
     else
       wordSequence = 0;
     break;
@@ -1014,6 +1019,7 @@ void DisplayWordDP (char WordIn[])
 
 void SpecialOccasionMessage()
 {
+  // Only show the message a few times per hour, and only in the morning
   if (second() % 20 == 0 && hour() < 12) {
     // personal messages
     if (month() == BIRTHDAY_MONTH && day() == BIRTHDAY_DAY)
@@ -1023,7 +1029,7 @@ void SpecialOccasionMessage()
     else if (month() == 1 && day() == 1)
       DisplayWordSequence(13);  // Happy new year!
     // else if (month() == 7 && day() == 4)
-    //   DisplayWordSequence(14);  // Merry Christmas!
+    //   DisplayWordSequence(14);  // Happy 4th of July!
     // else if (month() == 11 && weekday() == 5 && day() >= 22 && day <= 28)
     //   DisplayWordSequence(15);  // Happy Thanksgiving!
     // else if (month() == 12 && day() == 25)
@@ -1116,7 +1122,7 @@ void setup() {
 
 
 
-  DisplayWordSequence(10);  // Display: Hello Graceanna
+  DisplayWordSequence(10);  // Say hello!
 
   buttonMonitor = a5GetButtons();
   if (( buttonMonitor & a5_alarmSetBtn) && ( buttonMonitor & a5_timeSetBtn))
