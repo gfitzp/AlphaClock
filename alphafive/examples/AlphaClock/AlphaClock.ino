@@ -100,6 +100,9 @@ For additional requirements, please see:
 #include <Wire.h>       // For optional RTC module
 #include <DS1307RTC.h>  // For optional RTC module. https://github.com/PaulStoffregen/DS1307RTC
 #include <EEPROM.h>     // For saving settings
+#include <Adafruit_GPS.h>
+#include <Timezone.h>
+
 
 // "Factory" default configuration can be configured here:
 #define a5brightLevelDefault 9
@@ -111,9 +114,24 @@ For additional requirements, please see:
 #define a5AlarmToneDefault 2
 #define a5NumberCharSetDefault 2
 #define a5DisplayModeDefault 0
+#define a5GPSModeDefault 0
+
 #define USERNAME "GLENN"
 #define BIRTHDAY_MONTH 8
 #define BIRTHDAY_DAY 3
+
+byte GPSMode;
+#define GPSSerial Serial1
+#define GPSECHO false
+uint32_t timer = millis();
+uint32_t last_gps_update = 60000; // start with 60000, so we update the clock as soon as we are able rather than waiting a full minute
+time_t utc_time, local_time;
+Adafruit_GPS GPS(&GPSSerial);
+
+// Note: enabling the GPS feature also enables auto-DST changes according to these TimeChangeRule values:
+TimeChangeRule usEDT = {"EDT", Second, Sun, Mar, 2, -240};  //UTC - 4 hours
+TimeChangeRule usEST = {"EST", First, Sun, Nov, 2, -300};   //UTC - 5 hours
+Timezone usEastern(usEDT, usEST);
 
 // Clock mode variables
 
@@ -132,7 +150,7 @@ unsigned int NightLightStep;
 // Configuration menu:
 byte menuItem;   //Current position within options menu
 int8_t optionValue;
-#define MenuItemsMax 10
+#define MenuItemsMax 11
 
 #define AMPM24HRMenuItem 0
 #define NightLightMenuItem 1
@@ -145,6 +163,7 @@ int8_t optionValue;
 #define SetDayMenuItem 8
 #define SetSecondsMenuItem 9
 #define AltModeMenuItem 10
+#define GPSModeMenuItem 11
 
 
 
@@ -672,6 +691,9 @@ void DisplayMenuOptionName(void){
     //    DisplayWord ("ALTW/", 2000);
     //   DisplayWordDP("__11_");
     break;
+  case GPSModeMenuItem:
+    DisplayWord (" GPS ", 800);
+    break;
   default:  // do nothing!
     break;
   }
@@ -1064,6 +1086,15 @@ void setup() {
 
   EEReadSettings(); // Read settings stored in EEPROM
 
+  if (GPSMode) {
+    GPS.begin(9600);
+    GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA); // needs to be PMTK_SET_NMEA_OUTPUT_RMCGGA otherwise we don't get the number of satellites we can currently see
+    GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);    // 1, 5, 10 second GPS updates: PMTK_SET_NMEA_UPDATE_1HZ, PMTK_SET_NMEA_UPDATE_200_MILLIHERTZ, PMTK_SET_NMEA_UPDATE_100_MILLIHERTZ
+    GPS.sendCommand(PGCMD_ANTENNA);
+    delay(1000);
+    GPSSerial.println(PMTK_Q_RELEASE);
+  }
+
   if (Brightness == 0)
     Brightness = 1;       // If display is fully dark at reset, turn it up to minimum brightness.
 
@@ -1090,6 +1121,7 @@ void setup() {
   }
 
   SerialPrintTime();
+  Serial.println();
   NextClockUpdate = millis() + 1;
 
   buttonMonitor = 0;
@@ -1138,6 +1170,7 @@ void setup() {
     NightLightType = a5NightLightTypeDefault;
     numberCharSet = a5NumberCharSetDefault;
     DisplayMode = a5DisplayModeDefault;
+    GPSMode = a5GPSModeDefault;
 
     wordSequenceStep = 0;
     DisplayWord ("*****", 1000);
@@ -1164,6 +1197,112 @@ void loop() {
 
   milliTemp = millis();
   checkButtons();
+
+  if (GPSMode) {
+
+    // read data from the GPS in the 'main loop'
+    char c = GPS.read();
+
+    // if you want to debug, this is a good time to do it!
+    if (GPSECHO)
+      if (c) Serial.print(c);
+
+    // if a sentence is received, we can check the checksum, parse it...
+    if (GPS.newNMEAreceived()) {
+      // a tricky thing here is if we print the NMEA sentence, or data
+      // we end up not listening and catching other sentences!
+      // so be very wary if using OUTPUT_ALLDATA and trying to print out data
+      Serial.print(GPS.lastNMEA()); // this also sets the newNMEAreceived() flag to false
+
+      if (!GPS.parse(GPS.lastNMEA())) // this also sets the newNMEAreceived() flag to false
+        return; // we can fail to parse a sentence in which case we should just wait for another
+
+      // Only update the time if we have a fix and we're getting RMC sentences, since those have both time and date values
+      if (GPS.fix && String(GPS.lastNMEA()).startsWith("$GPRMC")) {
+
+        // Convert the GPS time into Unix epoch time
+        utc_time = makeTime({GPS.seconds, GPS.minute, GPS.hour, 0, GPS.day, GPS.month, CalendarYrToTm(2000+GPS.year)}); // '0' because makeTime() needs a weekday
+
+        // Convert the Unix epoch time to the local time
+        local_time = usEastern.toLocal(utc_time);
+        // Serial.print("Local time: "); Serial.println(local_time);
+
+        // Update the time once a minute
+        if (millis() - last_gps_update >= 60000) {
+          last_gps_update = millis(); // Reset the timer
+
+          Serial.println();
+          Serial.print("UTC time from GPS: ");
+          Serial.print(2000+GPS.year); Serial.print("-");
+          if (GPS.month < 10) { Serial.print('0'); } Serial.print(GPS.month); Serial.print("-");
+          if (GPS.day < 10) { Serial.print('0'); } Serial.print(GPS.day);
+          Serial.print(" ");
+          if (GPS.hour < 10) { Serial.print('0'); } Serial.print(GPS.hour); Serial.print(":");
+          if (GPS.minute < 10) { Serial.print('0'); } Serial.print(GPS.minute); Serial.print(":");
+          if (GPS.seconds < 10) { Serial.print('0'); } Serial.println(GPS.seconds);
+
+          Serial.print("       Local time: ");
+          Serial.print(year(local_time)); Serial.print("-");
+          if (month(local_time) < 10) { Serial.print('0'); } Serial.print(month(local_time)); Serial.print("-");
+          if (day(local_time) < 10) { Serial.print('0'); } Serial.print(day(local_time));
+          Serial.print(" ");
+          if (hour(local_time) < 10) { Serial.print('0'); } Serial.print(hour(local_time)); Serial.print(":");
+          if (minute(local_time) < 10) { Serial.print('0'); } Serial.print(minute(local_time)); Serial.print(":");
+          if (second(local_time) < 10) { Serial.print('0'); } Serial.println(second(local_time));
+
+          // Set the internal clock
+          setTime(local_time);
+          Serial.print("Set the time");
+
+          // Also set the real-time clock if one is present
+          if (UseRTC) {
+            RTC.set(now());
+            Serial.print(" and the real-time clock");
+          }
+          Serial.println(" using the GPS");
+          Serial.println();
+        }
+      }
+    }
+
+    // approximately every 2 seconds or so, print out the current stats
+    if (millis() - timer > 2000) {
+      timer = millis(); // reset the timer
+
+      Serial.print("\nTime: ");
+      if (GPS.hour < 10) { Serial.print('0'); }
+      Serial.print(GPS.hour, DEC); Serial.print(':');
+      if (GPS.minute < 10) { Serial.print('0'); }
+      Serial.print(GPS.minute, DEC); Serial.print(':');
+      if (GPS.seconds < 10) { Serial.print('0'); }
+      Serial.print(GPS.seconds, DEC); Serial.print('.');
+      if (GPS.milliseconds < 10) {
+        Serial.print("00");
+      } else if (GPS.milliseconds > 9 && GPS.milliseconds < 100) {
+        Serial.print("0");
+      }
+      Serial.println(GPS.milliseconds);
+      Serial.print("Date: ");
+      Serial.print(GPS.day, DEC); Serial.print('/');
+      Serial.print(GPS.month, DEC); Serial.print("/20");
+      Serial.println(GPS.year, DEC);
+      Serial.print("Epoch time: "); Serial.println(utc_time);
+      Serial.print("Fix: "); Serial.print((int)GPS.fix);
+      Serial.print(" quality: "); Serial.println((int)GPS.fixquality);
+      if (GPS.fix) {
+        Serial.print("Location: ");
+        Serial.print(GPS.latitude, 4); Serial.print(GPS.lat);
+        Serial.print(", ");
+        Serial.print(GPS.longitude, 4); Serial.println(GPS.lon);
+        Serial.print("Speed (knots): "); Serial.println(GPS.speed);
+        Serial.print("Angle: "); Serial.println(GPS.angle);
+        Serial.print("Altitude: "); Serial.println(GPS.altitude);
+        Serial.print("Satellites: "); Serial.println((int)GPS.satellites);
+      }
+      Serial.println();
+    }
+
+  }
 
   if (UpdateBrightness)
   {
@@ -1281,7 +1420,6 @@ void loop() {
   {
     processSerialMessage();
   }
-
 
 }
 
@@ -1760,6 +1898,31 @@ void UpdateDisplay (byte forceUpdate) {
       ExtendTextDisplay = 1;
 
     }
+    else if (menuItem == GPSModeMenuItem)
+    {
+      if (optionValue != 0)
+      {
+        if (GPSMode)
+          GPSMode = 0;
+        else
+          GPSMode = 1;
+          GPS.begin(9600);
+          GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA); // needs to be PMTK_SET_NMEA_OUTPUT_RMCGGA otherwise we don't get the number of satellites we can currently see
+          GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);    // 1, 5, 10 second GPS updates: PMTK_SET_NMEA_UPDATE_1HZ, PMTK_SET_NMEA_UPDATE_200_MILLIHERTZ, PMTK_SET_NMEA_UPDATE_100_MILLIHERTZ
+          GPS.sendCommand(PGCMD_ANTENNA);
+          // delay(1000);
+          GPSSerial.println(PMTK_Q_RELEASE);
+        optionValue = 0;
+      }
+
+      if (GPSMode) {
+        DisplayWord (" ON  ", 500);
+      }
+      else
+        DisplayWord (" OFF ", 500);
+
+      ExtendTextDisplay = 1;
+    }
     else if (menuItem == SetYearMenuItem)
     {
       if (optionValue != 0){
@@ -2073,6 +2236,18 @@ void TimeDisplay (byte DisplayModeLocal, byte forceUpdateCopy)  {
           a5loadOSB_DP("___1_",a5_brightLevel);   // DP dot in DisplayMode 1.
       }
 
+      if (GPSMode) {
+        // Blink the rightmost bottom decimal point to show GPS fix status
+        // Once every other second if there's no fix
+        if (!(GPS.fix) && SecNow % 2 == 0) {
+          a5loadOSB_DP("____1",a5_brightLevel);
+        }
+        // Once every 15 seconds if there's a GPS fix
+        // else if (GPS.fix && SecNow % 15 == 0) {
+        //   a5loadOSB_DP("____1",a5_brightLevel);
+        // }
+      }
+
       if (AlarmEnabled)
         a5loadOSB_DP("2____",a5_brightLevel);
 
@@ -2273,6 +2448,7 @@ void ApplyDefaults (void) {
   AlarmTone =       a5AlarmToneDefault;
   NightLightType =  a5NightLightTypeDefault;
   numberCharSet =   a5NumberCharSetDefault;
+  GPSMode =         a5GPSModeDefault;
 }
 
 
@@ -2341,8 +2517,13 @@ void EEReadSettings (void) {
   else
     DisplayMode = value;
 
-
-
+  value = EEPROM.read(9);
+  if (value > 1)
+  {
+    GPSMode = a5GPSModeDefault;
+  }
+  else
+    GPSMode = value;
 }
 
 
@@ -2405,6 +2586,11 @@ void EESaveSettings (void){
     value = EEPROM.read(8);
     if (DisplayMode != value){
       a5writeEEPROM(8, DisplayMode);
+      indicateEEPROMwritten = 1;
+    }
+    value = EEPROM.read(9);
+    if (GPSMode != value){
+      a5writeEEPROM(9, GPSMode);
       indicateEEPROMwritten = 1;
     }
 
