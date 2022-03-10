@@ -220,6 +220,8 @@ byte MBlevel[] = {
   0, 1, 5,10,15,19,15,19, 5,10,15,19};
 byte MBmode[]  = {
   0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 2, 2};
+#define WindDownHour 22
+#define WakeUpHour 8
 
 // For fade and update management:
 byte SecLast;
@@ -1336,6 +1338,17 @@ void loop() {
       Serial.println();
     }
 
+  }
+
+  // Dynamically change the LCD backlight depending on if it's bedtime or not
+  if (hour() == WakeUpHour && minute() == 0 && second() == 0) {
+    EEReadSettings(); // read the last-saved Brightness variable from memory
+    UpdateBrightness = 1;
+  }
+  else if (hour() == WindDownHour && minute() == 0 && second() == 0) {
+    EEReadSettings();
+    Brightness = 1;  // sets to the minimum brightness
+    UpdateBrightness = 1;
   }
 
   if (UpdateBrightness)
