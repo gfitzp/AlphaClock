@@ -1626,11 +1626,20 @@ void loop()
 
             Serial.println(GPS.milliseconds);
             Serial.print("Date: ");
-            Serial.print(GPS.day, DEC);
-            Serial.print('/');
+            Serial.print("20");
+            Serial.print(GPS.year, DEC);
+            Serial.print("-");
+            if(GPS.month < 10)
+            {
+                Serial.print("0");
+            }
             Serial.print(GPS.month, DEC);
-            Serial.print("/20");
-            Serial.println(GPS.year, DEC);
+            Serial.print("-");
+            if(GPS.day < 10)
+            {
+                Serial.print("0");
+            }
+            Serial.println(GPS.day, DEC);
             Serial.print("Epoch time: ");
             Serial.println(utc_time);
             Serial.print("Fix: ");
