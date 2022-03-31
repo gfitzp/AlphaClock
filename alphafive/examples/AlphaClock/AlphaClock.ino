@@ -224,7 +224,6 @@ byte SoundSequence;
 void incrementAlarm(void)
 {
     // Advance alarm time by one minute
-
     AlarmTimeMin += 1;
 
     if(AlarmTimeMin > 59)
@@ -244,7 +243,6 @@ void incrementAlarm(void)
 void decrementAlarm(void)
 {
     // Retard alarm time by one minute
-
     if(AlarmTimeMin > 0)
     {
         AlarmTimeMin--;
@@ -270,7 +268,6 @@ void TurnOffAlarm(void)
 {
     // This cancels the alarm when it is going off (or snoozed).
     // It does leave the alarm enabled for next time, however.
-
     if(alarmNow || snoozed)
     {
         snoozed = 0;
