@@ -1,110 +1,94 @@
- /*
+/*
 
- AlphaClock.ino
+    AlphaClock.ino
 
- -- Alpha Clock Five Firmware, version 2.2 --
+    -- Alpha Clock Five Firmware, version 2.2 --
 
- Version 2.2.0 - November 15, 2019
- Copyright (c) 2019 Windell H. Oskay.  All right reserved.
- http://www.evilmadscientist.com/
+    Version 2.2.0 - November 15, 2019
+    Copyright (c) 2019 Windell H. Oskay.  All right reserved.
+    http://www.evilmadscientist.com/
 
- ------------------------------------------------------------
+    ------------------------------------------------------------
 
- Designed for Alpha Clock Five, a five letter word clock designed by
- Evil Mad Scientist Laboratories http://www.evilmadscientist.com
+    Designed for Alpha Clock Five, a five letter word clock designed by
+    Evil Mad Scientist Laboratories http://www.evilmadscientist.com
 
- Thanks to Trammell Hudson for inspiration and helpful discussion.
- https://bitbucket.org/hudson/alphaclock
+    Thanks to Trammell Hudson for inspiration and helpful discussion.
+    https://bitbucket.org/hudson/alphaclock
 
+    Thanks to William Phelps - wm (at) usa.net, for several important
+    bug fixes.    https://github.com/wbphelps/AlphaClock
 
- Thanks to William Phelps - wm (at) usa.net, for several important
- bug fixes.    https://github.com/wbphelps/AlphaClock
+    ------------------------------------------------------------
 
- ------------------------------------------------------------
+    Target: ATmega644[potentially with suffixes], clock at 16 MHz.
 
-Target: ATmega644[potentially with suffixes], clock at 16 MHz.
+    Environment
 
-Environment
+    Designed to work with Arduino 1.8; untested with other versions.
 
-Designed to work with Arduino 1.8; untested with other versions.
+    Install the MightyCore additions for Arduino:
+    https://github.com/MCUdude/MightyCore#how-to-install
 
-Install the MightyCore additions for Arduino:
-https://github.com/MCUdude/MightyCore#how-to-install
+    Tools > Board> MightyCore: ATmega644
+    Clock: External 16 MHz
+    BOD: 2.7V
+    Variant: 644 (select the actual chip on your board)
+    Pinout: Sanguino pinout
 
-Tools > Board> MightyCore: ATmega644
-Clock: External 16 MHz
-BOD: 2.7V
-Variant: 644 (select the actual chip on your board)
-Pinout: Sanguino pinout
+    Download and install the Time library:
+    https://github.com/PaulStoffregen/Time
 
-Download and install the Time library:
-https://github.com/PaulStoffregen/Time
+    Download and install the DS1307 library:
+    https://github.com/PaulStoffregen/DS1307RTC
 
-Download and install the DS1307 library:
-https://github.com/PaulStoffregen/DS1307RTC
+    (The above two can be added to your regular Arduino libraries folder.)
 
-(The above two can be added to your regular Arduino libraries folder.)
+    For additional requirements, please see:
+    http://wiki.evilmadscience.com/Alpha_Clock_Firmware_v2
 
+    Note in particular that the Alpha Clock Five bootloader uses
+    a typical upload speed of 57200 baud.
 
-For additional requirements, please see:
- http://wiki.evilmadscience.com/Alpha_Clock_Firmware_v2
+    ------------------------------------------------------------
 
- Note in particular that the Alpha Clock Five bootloader uses
- a typical upload speed of 57200 baud.
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
 
+    This library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
 
- ------------------------------------------------------------
+    You should have received a copy of the GNU General Public License
+    along with this library.  If not, see <http://www.gnu.org/licenses/>.
 
+    Note that the two word lists included with this distribution are NOT licensed under the GPL.
+    - The list in fiveletterwords.h is derived from SCOWL, http://wordlist.sourceforge.net
+    Please see README-SCOWL.txt for copyright restrictions on the use and redistribution of this word list.
+    - The alternative list in fiveletterwordspd.h is in the PUBLIC DOMAIN,
+    and cannot be restricted by the GPL or other copyright licenses.
 
-
-
-
-
-
-
-
-
-
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
-
- This library is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this library.  If not, see <http://www.gnu.org/licenses/>.
-
-
-
- Note that the two word lists included with this distribution are NOT licensed under the GPL.
- - The list in fiveletterwords.h is derived from SCOWL, http://wordlist.sourceforge.net
- Please see README-SCOWL.txt for copyright restrictions on the use and redistribution of this word list.
- - The alternative list in fiveletterwordspd.h is in the PUBLIC DOMAIN,
- and cannot be restricted by the GPL or other copyright licenses.
-
- */
-
+*/
 
 #include "alphafive.h"      // Alpha Clock Five library
 
 // Comment out exactly one of the following two lines
-#include "fiveletterwords.h"   // Standard word list --
-//#include "fiveletterwordspd.h" // Public domain alternative
 
+#include "fiveletterwords.h"        // Standard word list --
+//#include "fiveletterwordspd.h"    // Public domain alternative
 
-#include <Time.h>       // The Arduino Time library, https://github.com/PaulStoffregen/Time
-#include <Wire.h>       // For optional RTC module
-#include <DS1307RTC.h>  // For optional RTC module. https://github.com/PaulStoffregen/DS1307RTC
-#include <EEPROM.h>     // For saving settings
+#include <Time.h>           // The Arduino Time library, https://github.com/PaulStoffregen/Time
+#include <Wire.h>           // For optional RTC module
+#include <DS1307RTC.h>      // For optional RTC module. https://github.com/PaulStoffregen/DS1307RTC
+#include <EEPROM.h>         // For saving settings
 #include <Adafruit_GPS.h>
 #include <Timezone.h>
 
-
 // "Factory" default configuration can be configured here:
+
 #define a5brightLevelDefault 9
 #define a5HourMode24Default 0
 #define a5AlarmEnabledDefault 0
