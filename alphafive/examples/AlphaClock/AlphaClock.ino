@@ -86,6 +86,7 @@
 #include <EEPROM.h>         // For saving settings
 #include <Adafruit_GPS.h>
 #include <Timezone.h>
+#include <avr/wdt.h>    // Watchdog timer: auto-recover from firmware hangs
 
 // "Factory" default configuration can be configured here:
 
@@ -99,6 +100,7 @@
 #define a5NumberCharSetDefault 2
 #define a5DisplayModeDefault 0
 #define a5GPSModeDefault 0          // GPS off
+#define a5BedtimeDefault (22 * 60)  // Fully dimmed by 10:00 PM
 
 #define USERNAME "GLENN"    // Greeting name used at startup
 #define BIRTHDAY_MONTH 8    // What month and day to wish you a happy birthday
@@ -109,17 +111,80 @@
 byte GPSMode;
 #define GPSSerial Serial1
 #define GPSECHO false
+#define GPSDEBUG false      // Set true for verbose GPS logging over serial.
+                            // NOTE: the debug dumps block the main loop long enough
+                            // to overflow the GPS receive buffer; leave false normally.
 uint32_t timer = millis();
 uint32_t last_gps_update = 60000;   // Start with at least 60 secs since last GPS update
+uint32_t last_rtc_update = 0;
+byte rtcSyncedFromGPS = 0;          // Set once the RTC has been written from GPS time
 time_t utc_time, local_time;
 Adafruit_GPS GPS(&GPSSerial);
 
-// Note: enabling the GPS feature also enables auto-DST changes
-//       according to these TimeChangeRule values:
+// Note: enabling the GPS feature also enables auto-DST changes.
+// The local time zone is selected automatically from the GPS location
+// (see selectTimezoneIndex), using these TimeChangeRule values:
 
-TimeChangeRule usEDT = {"EDT", Second, Sun, Mar, 2, -240};  // UTC - 4 hours
-TimeChangeRule usEST = {"EST", First, Sun, Nov, 2, -300};   // UTC - 5 hours
+TimeChangeRule usEDT = {"EDT", Second, Sun, Mar, 2, -240};    // UTC - 4 hours
+TimeChangeRule usEST = {"EST", First, Sun, Nov, 2, -300};     // UTC - 5 hours
+TimeChangeRule usCDT = {"CDT", Second, Sun, Mar, 2, -300};    // UTC - 5 hours
+TimeChangeRule usCST = {"CST", First, Sun, Nov, 2, -360};     // UTC - 6 hours
+TimeChangeRule usMDT = {"MDT", Second, Sun, Mar, 2, -360};    // UTC - 6 hours
+TimeChangeRule usMST = {"MST", First, Sun, Nov, 2, -420};     // UTC - 7 hours
+TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -420};    // UTC - 7 hours
+TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -480};     // UTC - 8 hours
+TimeChangeRule usAKDT = {"AKDT", Second, Sun, Mar, 2, -480};  // UTC - 8 hours
+TimeChangeRule usAKST = {"AKST", First, Sun, Nov, 2, -540};   // UTC - 9 hours
+TimeChangeRule usHST = {"HST", First, Sun, Nov, 2, -600};     // UTC - 10 hours
+
 Timezone usEastern(usEDT, usEST);
+Timezone usCentral(usCDT, usCST);
+Timezone usMountain(usMDT, usMST);
+Timezone usArizona(usMST);          // Arizona: Mountain Standard Time year-round
+Timezone usPacific(usPDT, usPST);
+Timezone usAlaska(usAKDT, usAKST);
+Timezone usHawaii(usHST);           // Hawaii: no DST
+
+#define TZEastern 0
+#define TZCentral 1
+#define TZMountain 2
+#define TZArizona 3
+#define TZPacific 4
+#define TZAlaska 5
+#define TZHawaii 6
+#define TZCount 7
+
+Timezone* const timezones[] =
+{
+  &usEastern, &usCentral, &usMountain, &usArizona, &usPacific, &usAlaska, &usHawaii
+};
+
+int8_t tzIndex = TZEastern;
+
+// GPS location cache, for time zone selection and the sunrise/sunset calculation.
+// Cached in EEPROM (addresses 10-15) so both work at power-up, before the first GPS fix.
+
+#define EELocMagicAddr 10
+#define EELocMagic 0xA5
+#define EELatAddr 11
+#define EELonAddr 13
+#define EETzAddr 15
+
+byte locationValid = 0;
+int16_t storedLat100, storedLon100;   // Latitude and longitude, in degrees * 100
+
+// Sunrise/sunset schedule.  Times are minutes past local midnight; -1 = unknown.
+
+int sunriseMinutes = -1;
+int sunsetMinutes = -1;
+int astroDawnMinutes = -1;      // Astronomical dawn: sun 18 degrees below horizon
+byte lastSunCalcDay = 0;
+
+// Brightness-ramp state:
+byte lastScheduleMinute = 61;   // Evaluate the schedule only when the minute changes
+int8_t lastScheduleTarget = -1; // Last brightness the schedule applied; -1 = not yet run
+byte schedulePhaseLast = 0;     // 0 = day, 1 = evening ramp, 2 = night, 3 = morning ramp
+byte scheduleOverride = 0;      // Set when brightness was changed manually; cleared at next phase
 
 // Clock mode variables
 
@@ -136,7 +201,7 @@ unsigned int NightLightStep;
 // Configuration menu:
 byte menuItem;              // Current position within options menu
 int8_t optionValue;
-#define MenuItemsMax 11
+#define MenuItemsMax 12
 
 #define AMPM24HRMenuItem 0
 #define NightLightMenuItem 1
@@ -150,6 +215,7 @@ int8_t optionValue;
 #define SetSecondsMenuItem 9
 #define AltModeMenuItem 10
 #define GPSModeMenuItem 11
+#define BedtimeMenuItem 12
 
 // Clock display mode:
 int8_t DisplayMode;
@@ -203,8 +269,18 @@ byte MBmode[]  =
 {
   0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 2, 2
 };
-#define WindDownHour 22
-#define WakeUpHour 8
+// Brightness schedule (all values in minutes past local midnight):
+// In the evening, brightness ramps down step by step, starting at sunset and
+// reaching minimum brightness at bedtime.  In the morning it ramps back up,
+// starting at astronomical dawn and reaching full brightness at sunrise.
+// Bedtime is set from the configuration menu ("BED TIME"), in half-hour
+// steps between 7:00 PM and 11:30 PM, and is stored in EEPROM.
+unsigned int BedtimeMinutes = a5BedtimeDefault;
+#define BedtimeEarliestMinutes (19 * 60)      // 7:00 PM
+#define BedtimeLatestMinutes (23 * 60 + 30)   // 11:30 PM
+#define MinEveningRampMinutes 30        // Shortest evening ramp (if sunset is at/after bedtime)
+#define DefaultMorningRampMinutes 90    // Morning ramp length if astronomical dawn is unavailable
+#define FallbackDawnMinutes (8 * 60)    // Full brightness by 8:00 AM if sunrise is unknown
 
 // For fade and update management:
 byte SecLast;
@@ -220,6 +296,10 @@ byte alarmNow;
 
 byte modeShowAlarmTime;
 byte SoundSequence;
+
+// Alarm tone preview (played when selecting a tone in the config menu):
+byte previewActive = 0;
+byte previewStep;
 
 void incrementAlarm(void)
 {
@@ -755,6 +835,10 @@ void DisplayMenuOptionName(void)
       DisplayWord(" GPS ", 800);
       break;
 
+    case BedtimeMenuItem:
+      DisplayWordSequence(17);  // Bed Time
+      break;
+
     default:  // do nothing!
       break;
   }
@@ -889,6 +973,121 @@ void ManageAlarm(void)
       {
         a5tone(0, 50);
         SoundSequence = 0;
+      }
+    }
+  }
+}
+
+void ManageTonePreview(void)
+{
+  // Play a short, one-cycle preview of the currently selected alarm tone:
+  // the same patterns as ManageAlarm(), starting with a beep (no leading
+  // silence) and ending without the long trailing pause.
+
+  if ((TIMSK1 & _BV(OCIE1A)) == 0)     // If last tone has finished
+  {
+    if (AlarmTone == 0)   // X-Low Tone
+    {
+      if (previewStep < 7)
+      {
+        if (previewStep & 1)
+        {
+          a5tone(0, 300);
+        }
+        else
+        {
+          a5tone(50, 300);
+        }
+
+        previewStep++;
+      }
+      else
+      {
+        previewActive = 0;
+      }
+    }
+    else if (AlarmTone == 1)   // Low Tone
+    {
+      if (previewStep < 7)
+      {
+        if (previewStep & 1)
+        {
+          a5tone(0, 200);
+        }
+        else
+        {
+          a5tone(100, 200);
+        }
+
+        previewStep++;
+      }
+      else
+      {
+        previewActive = 0;
+      }
+    }
+    else if (AlarmTone == 2)   // Med Tone
+    {
+      if (previewStep < 5)
+      {
+        if (previewStep & 1)
+        {
+          a5tone(0, 200);
+        }
+        else
+        {
+          a5tone(1000, 200);
+        }
+
+        previewStep++;
+      }
+      else
+      {
+        previewActive = 0;
+      }
+    }
+    else if (AlarmTone == 3)   // High Tone
+    {
+      if (previewStep < 5)
+      {
+        if (previewStep & 1)
+        {
+          a5tone(0, 200);
+        }
+        else
+        {
+          a5tone(2050, 300);
+        }
+
+        previewStep++;
+      }
+      else
+      {
+        previewActive = 0;
+      }
+    }
+    else if (AlarmTone == 4)   // Siren Tone: the rising sweep, without the long hold
+    {
+      if (previewStep < 254)
+      {
+        a5tone(20 + 4 * previewStep, 2);
+        previewStep++;
+      }
+      else
+      {
+        previewActive = 0;
+      }
+    }
+    else   // "Tink" Tone: a single tick
+    {
+      if (previewStep == 0)
+      {
+        a5tone(1000, 50);
+        previewStep++;
+      }
+      else
+      {
+        previewActive = 0;
       }
     }
   }
@@ -1216,6 +1415,8 @@ void DisplayWordSequence(byte sequence)
         wordSequence = 0;
       }
 
+      break;
+
     case 16:    // Say "MERRY" "X-MAS"
       if (wordSequenceStep < 3)
       {
@@ -1224,6 +1425,26 @@ void DisplayWordSequence(byte sequence)
       else if (wordSequenceStep < 5)
       {
         DisplayWord("X-MAS", 800);
+      }
+      else
+      {
+        wordSequence = 0;
+      }
+
+      break;
+
+    case 17:    // Display " BED " "TIME "
+      if (wordSequenceStep == 1)
+      {
+        DisplayWord(" BED ", 600);
+      }
+      else if (wordSequenceStep == 3)
+      {
+        DisplayWord("TIME ", 600);
+      }
+      else if (wordSequenceStep < 5)
+      {
+        DisplayWord("     ", 100);
       }
       else
       {
@@ -1282,7 +1503,7 @@ void SpecialOccasionMessage()
 
     // else if (month() == 7 && day() == 4)
     //   DisplayWordSequence(14);  // Happy 4th of July!
-    // else if (month() == 11 && weekday() == 5 && day() >= 22 && day <= 28)
+    // else if (month() == 11 && weekday() == 5 && day() >= 22 && day() <= 28)
     //   DisplayWordSequence(15);  // Happy Thanksgiving!
     // else if (month() == 12 && day() == 25)
     //   DisplayWordSequence(16);  // Merry Christmas!
@@ -1300,13 +1521,403 @@ void  EndVCRmode()
   }
 }
 
+int8_t selectTimezoneIndex(float lat, float lon)
+{
+  // Approximate US time zone selection from GPS coordinates.
+  // Real zone boundaries follow state lines rather than meridians, so
+  // locations near a boundary (western Texas, Indiana, etc.) may be
+  // classified wrong.  Note: the Navajo Nation observes DST but falls
+  // inside the Arizona box here.
+
+  if ((lat < 25.0) && (lon < -140.0))
+  {
+    return TZHawaii;
+  }
+
+  if ((lat > 50.0) && (lon < -125.0))
+  {
+    return TZAlaska;
+  }
+
+  if ((lat > 31.3) && (lat < 37.0) && (lon > -114.9) && (lon < -109.0))
+  {
+    return TZArizona;   // No DST
+  }
+
+  if (lon >= -85.0)
+  {
+    return TZEastern;
+  }
+
+  if (lon >= -102.0)
+  {
+    return TZCentral;
+  }
+
+  if (lon >= -115.0)
+  {
+    return TZMountain;
+  }
+
+  return TZPacific;
+}
+
+int sunEventMinutes(byte rise, int yr, byte mo, byte dy, float lat, float lon, int utcOffsetMin, float zenith)
+{
+  // Sunrise/sunset calculation, from the "Almanac for Computers" algorithm
+  // (US Naval Observatory, 1990; as described by Ed Williams).
+  // Returns the event time in minutes past local midnight, or -1 if the sun
+  // does not reach the given zenith angle on that date at that location.
+  // Zenith angles: 90.833 = official sunrise/sunset (upper limb + refraction),
+  // 96 = civil twilight, 102 = nautical twilight, 108 = astronomical twilight.
+  // Accuracy is within a couple of minutes, which is plenty for dimming a clock.
+  // Uses floating point, so call it once per day -- not in a tight loop.
+
+  int dayOfYear = (275 * mo / 9) - (((mo + 9) / 12) * (1 + ((yr - 4 * (yr / 4) + 2) / 3))) + dy - 30;
+
+  float lngHour = lon / 15.0;
+  float t;
+
+  if (rise)
+  {
+    t = dayOfYear + ((6.0 - lngHour) / 24.0);
+  }
+  else
+  {
+    t = dayOfYear + ((18.0 - lngHour) / 24.0);
+  }
+
+  float M = (0.9856 * t) - 3.289;                       // Sun's mean anomaly
+  float L = M + (1.916 * sin(M * DEG_TO_RAD)) + (0.020 * sin(2 * M * DEG_TO_RAD)) + 282.634;
+  L = fmod(L, 360.0);                                   // Sun's true longitude
+
+  if (L < 0)
+  {
+    L += 360.0;
+  }
+
+  float RA = atan(0.91764 * tan(L * DEG_TO_RAD)) * RAD_TO_DEG;  // Right ascension
+  RA = fmod(RA, 360.0);
+
+  if (RA < 0)
+  {
+    RA += 360.0;
+  }
+
+  // Put right ascension into the same quadrant as L, then convert to hours
+  RA = (RA + (floor(L / 90.0) * 90.0) - (floor(RA / 90.0) * 90.0)) / 15.0;
+
+  float sinDec = 0.39782 * sin(L * DEG_TO_RAD);         // Sun's declination
+  float cosDec = cos(asin(sinDec));
+
+  float cosH = (cos(zenith * DEG_TO_RAD) - (sinDec * sin(lat * DEG_TO_RAD)))
+               / (cosDec * cos(lat * DEG_TO_RAD));
+
+  if ((cosH > 1.0) || (cosH < -1.0))
+  {
+    return -1;    // Sun never reaches this zenith angle on this date at this location
+  }
+
+  float H;    // Sun's local hour angle, converted to hours
+
+  if (rise)
+  {
+    H = (360.0 - (acos(cosH) * RAD_TO_DEG)) / 15.0;
+  }
+  else
+  {
+    H = (acos(cosH) * RAD_TO_DEG) / 15.0;
+  }
+
+  float UT = fmod(H + RA - (0.06571 * t) - 6.622 - lngHour, 24.0);   // Event time, UTC hours
+
+  if (UT < 0)
+  {
+    UT += 24.0;
+  }
+
+  int localMin = (int)(UT * 60.0 + 0.5) + utcOffsetMin;
+
+  while (localMin < 0)
+  {
+    localMin += 1440;
+  }
+
+  while (localMin >= 1440)
+  {
+    localMin -= 1440;
+  }
+
+  return localMin;
+}
+
+void recomputeSunTimes(void)
+{
+  lastSunCalcDay = day();
+
+  if (locationValid == 0)
+  {
+    sunriseMinutes = -1;
+    sunsetMinutes = -1;
+    astroDawnMinutes = -1;
+    return;
+  }
+
+  float lat = storedLat100 / 100.0;
+  float lon = storedLon100 / 100.0;
+  time_t tLocal = now();
+
+  // Current UTC offset (including DST), in minutes, from the active time zone
+  int utcOffsetMin = (int)((tLocal - timezones[tzIndex]->toUTC(tLocal)) / 60);
+
+  sunriseMinutes = sunEventMinutes(1, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 90.833);
+  sunsetMinutes = sunEventMinutes(0, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 90.833);
+  astroDawnMinutes = sunEventMinutes(1, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 108.0);
+
+  Serial.print("Sun times recomputed. Astronomical dawn: ");
+
+  if (astroDawnMinutes >= 0)
+  {
+    Serial.print(astroDawnMinutes / 60);
+    printDigits(astroDawnMinutes % 60);
+  }
+  else
+  {
+    Serial.print("none");
+  }
+
+  Serial.print(", sunrise: ");
+
+  if (sunriseMinutes >= 0)
+  {
+    Serial.print(sunriseMinutes / 60);
+    printDigits(sunriseMinutes % 60);
+  }
+  else
+  {
+    Serial.print("none");
+  }
+
+  Serial.print(", sunset: ");
+
+  if (sunsetMinutes >= 0)
+  {
+    Serial.print(sunsetMinutes / 60);
+    printDigits(sunsetMinutes % 60);
+  }
+  else
+  {
+    Serial.print("none");
+  }
+
+  Serial.println();
+}
+
+void EEReadLocation(void)
+{
+  if (EEPROM.read(EELocMagicAddr) == EELocMagic)
+  {
+    storedLat100 = (int16_t)(EEPROM.read(EELatAddr) | ((uint16_t)EEPROM.read(EELatAddr + 1) << 8));
+    storedLon100 = (int16_t)(EEPROM.read(EELonAddr) | ((uint16_t)EEPROM.read(EELonAddr + 1) << 8));
+    locationValid = 1;
+    tzIndex = EEPROM.read(EETzAddr);
+
+    if ((tzIndex < 0) || (tzIndex >= TZCount))
+    {
+      tzIndex = TZEastern;
+    }
+  }
+}
+
+void EESaveLocation(void)
+{
+  a5writeEEPROM(EELocMagicAddr, EELocMagic);
+  a5writeEEPROM(EELatAddr, storedLat100 & 0xFF);
+  a5writeEEPROM(EELatAddr + 1, (storedLat100 >> 8) & 0xFF);
+  a5writeEEPROM(EELonAddr, storedLon100 & 0xFF);
+  a5writeEEPROM(EELonAddr + 1, (storedLon100 >> 8) & 0xFF);
+  a5writeEEPROM(EETzAddr, tzIndex);
+}
+
+void updateLocationFromGPS(void)
+{
+  // Cache the GPS location and select the local time zone from it.
+  // EEPROM is only rewritten when the clock has moved more than ~0.1 degrees
+  // (~7 miles), so this is safe to call on every GPS time update.
+  float lat = GPS.latitudeDegrees;
+  float lon = GPS.longitudeDegrees;
+
+  if ((lat == 0.0) && (lon == 0.0))
+  {
+    return;   // No valid location data yet
+  }
+
+  int16_t lat100 = (int16_t)(lat * 100.0);
+  int16_t lon100 = (int16_t)(lon * 100.0);
+
+  if (locationValid && (abs(lat100 - storedLat100) <= 10) && (abs(lon100 - storedLon100) <= 10))
+  {
+    return;   // Location unchanged
+  }
+
+  storedLat100 = lat100;
+  storedLon100 = lon100;
+  locationValid = 1;
+  tzIndex = selectTimezoneIndex(lat, lon);
+  EESaveLocation();
+  recomputeSunTimes();
+
+  const char* const tzNames[] =
+  {
+    "Eastern", "Central", "Mountain", "Arizona", "Pacific", "Alaska", "Hawaii"
+  };
+  Serial.print("GPS location cached: ");
+  Serial.print(lat, 2);
+  Serial.print(", ");
+  Serial.print(lon, 2);
+  Serial.print("  Time zone: ");
+  Serial.println(tzNames[tzIndex]);
+}
+
+byte EEStoredBrightness(void)
+{
+  // Read only the saved Brightness value, with the same sanity checks as
+  // EEReadSettings() -- but never return 0 (a fully dark display).
+  byte value = EEPROM.read(0);
+
+  if ((value > 100 + BrightnessMax) || (value < 100))
+  {
+    value = a5brightLevelDefault;
+  }
+  else
+  {
+    value = value - 100;
+  }
+
+  if (value == 0)
+  {
+    value = 1;
+  }
+
+  return value;
+}
+
+void applySunSchedule(void)
+{
+  // Brightness ramp scheduler.  Four phases per day:
+  //   Day (full daytime brightness)
+  //   Evening ramp: step down from daytime brightness, sunset -> bedtime, reaching minimum at bedtime
+  //   Night (minimum brightness)
+  //   Morning ramp: step up from minimum, astronomical dawn -> sunrise, reaching daytime brightness at sunrise
+  // Each step uses the display's normal fade, so the ramps feel continuous.
+  // A manual brightness change suspends the schedule until the next phase begins.
+  // Without a known GPS location, falls back to fixed times (9-10 PM down, 6:30-8 AM up).
+
+  if (minute() == lastScheduleMinute)
+  {
+    return;   // Targets have minute resolution; evaluate once per minute.
+  }
+
+  lastScheduleMinute = minute();
+
+  if (day() != lastSunCalcDay)
+  {
+    recomputeSunTimes();    // Recompute once per day (also after GPS first sets the date)
+  }
+
+  // Evening ramp window: sunset to bedtime
+  int eveEnd = BedtimeMinutes;
+  int eveStart = (sunsetMinutes >= 0) ? sunsetMinutes : (BedtimeMinutes - 60);
+
+  if (eveStart > eveEnd - MinEveningRampMinutes)
+  {
+    eveStart = eveEnd - MinEveningRampMinutes;    // Keep a minimum ramp length (high-latitude summers)
+  }
+
+  // Morning ramp window: astronomical dawn to sunrise
+  int mornEnd = (sunriseMinutes >= 0) ? sunriseMinutes : FallbackDawnMinutes;
+  int mornStart;
+
+  if ((astroDawnMinutes >= 0) && (astroDawnMinutes < mornEnd))
+  {
+    mornStart = astroDawnMinutes;
+  }
+  else
+  {
+    // No astronomical twilight (bright high-latitude nights), or it wrapped
+    // past midnight: use a fixed-length pre-sunrise ramp instead.
+    mornStart = mornEnd - DefaultMorningRampMinutes;
+
+    if (mornStart < 0)
+    {
+      mornStart = 0;
+    }
+  }
+
+  int nowMin = hour() * 60 + minute();
+  int8_t dayBright = EEStoredBrightness();    // Daytime brightness = last saved setting
+  int8_t target;
+  byte phase;
+
+  if ((nowMin >= eveStart) && (nowMin < eveEnd))
+  {
+    phase = 1;    // Evening ramp: interpolate dayBright down toward 1, hitting it at bedtime
+    target = dayBright - (int8_t)(((int)(dayBright - 1) * (nowMin - eveStart) + (eveEnd - eveStart) / 2)
+                                  / (eveEnd - eveStart));
+  }
+  else if ((nowMin >= mornStart) && (nowMin < mornEnd))
+  {
+    phase = 3;    // Morning ramp: interpolate 1 up toward dayBright, hitting it at sunrise
+    target = 1 + (int8_t)(((int)(dayBright - 1) * (nowMin - mornStart) + (mornEnd - mornStart) / 2)
+                          / (mornEnd - mornStart));
+  }
+  else if ((nowMin >= mornEnd) && (nowMin < eveStart))
+  {
+    phase = 0;    // Day
+    target = dayBright;
+  }
+  else
+  {
+    phase = 2;    // Night
+    target = 1;
+  }
+
+  if (lastScheduleTarget < 0)
+  {
+    // First evaluation after power-up: apply the schedule directly.
+    schedulePhaseLast = phase;
+    scheduleOverride = 0;
+  }
+  else if (phase != schedulePhaseLast)
+  {
+    schedulePhaseLast = phase;
+    scheduleOverride = 0;   // New phase: the schedule takes control again
+  }
+  else if (Brightness != lastScheduleTarget)
+  {
+    scheduleOverride = 1;   // Brightness was changed by hand: leave it alone until the next phase
+  }
+
+  if ((scheduleOverride == 0) && (Brightness != target))
+  {
+    Brightness = target;
+    UpdateBrightness = 1;
+  }
+
+  lastScheduleTarget = target;
+}
+
 void setup()
 {
+  MCUSR = 0;        // Clear the reset-cause flags so a watchdog reset
+  wdt_disable();    // can't leave the watchdog running into setup()
+
   a5Init();  // Required hardware init for Alpha Clock Five library functions
   VCRmode = 1;
   Serial.println("\nHello, World.");
   Serial.println("Alpha Clock Five here, reporting for duty!");
   EEReadSettings(); // Read settings stored in EEPROM
+  EEReadLocation(); // Read cached GPS location and time zone from EEPROM
 
   /*
       Figured out a lot of the GPS code from https://github.com/adafruit/Adafruit_GPS/
@@ -1423,6 +2034,7 @@ void setup()
     numberCharSet = a5NumberCharSetDefault;
     DisplayMode = a5DisplayModeDefault;
     GPSMode = a5GPSModeDefault;
+    BedtimeMinutes = a5BedtimeDefault;
     wordSequenceStep = 0;
     DisplayWord("*****", 1000);
   }
@@ -1436,10 +2048,14 @@ void setup()
   updateNightLight();
   DisplayModePhase = 0;
   DisplayModePhaseCount = 0;
+
+  wdt_enable(WDTO_8S);  // Watchdog: reset the clock if the main loop ever
+                        // hangs for more than 8 seconds (e.g., an I2C lockup)
 }
 
 void loop()
 {
+  wdt_reset();    // Feed the watchdog: we made it around the loop
   milliTemp = millis();
   checkButtons();
 
@@ -1463,26 +2079,32 @@ void loop()
       // a tricky thing here is if we print the NMEA sentence, or data
       // we end up not listening and catching other sentences!
       // so be very wary if using OUTPUT_ALLDATA and trying to print out data
-      Serial.print(GPS.lastNMEA()); // this also sets the newNMEAreceived() flag to false
+      if (GPSDEBUG)
+      {
+        Serial.print(GPS.lastNMEA()); // this also sets the newNMEAreceived() flag to false
+      }
 
       if (!GPS.parse(GPS.lastNMEA())) // this also sets the newNMEAreceived() flag to false
       {
         return;    // we can fail to parse a sentence in which case we should just wait for another
       }
 
-      // Only update the time if we have a fix and we're getting RMC sentences, since those have both time and date values
-      if (GPS.fix && String(GPS.lastNMEA()).startsWith("$GPRMC"))
+      // Only update the time if we have a fix and we're getting RMC sentences, since those have both time and date values.
+      // (strstr rather than String: no heap allocation, and matches both $GPRMC and the $GNRMC sent by multi-constellation modules.)
+      if (GPS.fix && (strstr(GPS.lastNMEA(), "RMC") != NULL))
       {
         // Convert the GPS time into Unix epoch time
         utc_time = makeTime({GPS.seconds, GPS.minute, GPS.hour, 0, GPS.day, GPS.month, CalendarYrToTm(2000 + GPS.year)}); // '0' because makeTime() needs a weekday
-        // Convert the Unix epoch time to the local time
-        local_time = usEastern.toLocal(utc_time);
+        // Convert the Unix epoch time to the local time, using the time zone chosen from the GPS location
+        local_time = timezones[tzIndex]->toLocal(utc_time);
         // Serial.print("Local time: "); Serial.println(local_time);
 
         // Update the time once a minute
         if (millis() - last_gps_update >= 60000)
         {
           last_gps_update = millis(); // Reset the timer
+          updateLocationFromGPS();    // Refresh cached location / time zone, if the clock has moved
+          local_time = timezones[tzIndex]->toLocal(utc_time);   // Recompute, in case the time zone just changed
           Serial.println();
           Serial.print("UTC time from GPS: ");
           Serial.print(2000 + GPS.year);
@@ -1570,11 +2192,17 @@ void loop()
           Serial.println(second(local_time));
           // Set the internal clock
           setTime(local_time);
+          EndVCRmode();     // GPS time counts as a valid sync: stop the "unset clock" blinking
           Serial.print("Set the time");
 
-          // Also set the real-time clock if one is present
-          if (UseRTC)
+          // Also set the real-time clock if one is present.  Write it on the
+          // first GPS sync and then only hourly: every write is a blocking I2C
+          // transaction, and the fewer of those, the fewer chances for a bus
+          // glitch to hang the main loop.
+          if (UseRTC && ((rtcSyncedFromGPS == 0) || (millis() - last_rtc_update >= 3600000UL)))
           {
+            last_rtc_update = millis();
+            rtcSyncedFromGPS = 1;
             RTC.set(now());
             Serial.print(" and the real-time clock");
           }
@@ -1585,8 +2213,10 @@ void loop()
       }
     }
 
-    // approximately every 2 seconds or so, print out the current stats
-    if (millis() - timer > 2000)
+    // approximately every 2 seconds or so, print out the current stats.
+    // Debug only: this dump blocks the loop long enough for the 64-byte GPS
+    // receive buffer to overflow, corrupting sentences.
+    if (GPSDEBUG && (millis() - timer > 2000))
     {
       timer = millis(); // reset the timer
       Serial.print("\nTime: ");
@@ -1673,18 +2303,9 @@ void loop()
     }
   }
 
-  // Dynamically change the LCD backlight depending on if it's bedtime or not
-  if (hour() == WakeUpHour && minute() == 0 && second() == 0)
-  {
-    EEReadSettings(); // read the last-saved Brightness variable from memory
-    UpdateBrightness = 1;
-  }
-  else if (hour() == WindDownHour && minute() == 0 && second() == 0)
-  {
-    EEReadSettings();
-    Brightness = 1;  // sets to the minimum brightness
-    UpdateBrightness = 1;
-  }
+  // Brightness ramps: down from sunset to bedtime, up from astronomical
+  // dawn to sunrise (fixed fallback times when the GPS location is unknown).
+  applySunSchedule();
 
   if (UpdateBrightness)
   {
@@ -1799,7 +2420,12 @@ void loop()
 
   if (alarmNow)
   {
+    previewActive = 0;   // The real alarm (or sound test) takes priority over a tone preview
     ManageAlarm();
+  }
+  else if (previewActive)
+  {
+    ManageTonePreview();
   }
 
   if (Serial.available())
@@ -2228,17 +2854,25 @@ void UpdateDisplay(byte forceUpdate)
     }
     else if (menuItem == AlarmToneMenuItem)  // Alarm Tone: 2
     {
-      AlarmTone += optionValue;
-      optionValue = 0;
-
-      if (AlarmTone < 0)
+      if (optionValue != 0)
       {
-        AlarmTone = 5;
-      }
+        AlarmTone += optionValue;
+        optionValue = 0;
 
-      if (AlarmTone > 5)
-      {
-        AlarmTone = 0;
+        if (AlarmTone < 0)
+        {
+          AlarmTone = 5;
+        }
+
+        if (AlarmTone > 5)
+        {
+          AlarmTone = 0;
+        }
+
+        // Play a short preview of the newly selected tone
+        a5noTone();
+        previewStep = 0;
+        previewActive = 1;
       }
 
       if (AlarmTone == 0)
@@ -2416,14 +3050,15 @@ void UpdateDisplay(byte forceUpdate)
         else
         {
           GPSMode = 1;
+
+          GPS.begin(9600);
+          GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA); // needs to be PMTK_SET_NMEA_OUTPUT_RMCGGA otherwise we don't get the number of satellites we can currently see
+          GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);    // 1, 5, 10 second GPS updates: PMTK_SET_NMEA_UPDATE_1HZ, PMTK_SET_NMEA_UPDATE_200_MILLIHERTZ, PMTK_SET_NMEA_UPDATE_100_MILLIHERTZ
+          GPS.sendCommand(PGCMD_ANTENNA);
+          // delay(1000);
+          GPSSerial.println(PMTK_Q_RELEASE);
         }
 
-        GPS.begin(9600);
-        GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA); // needs to be PMTK_SET_NMEA_OUTPUT_RMCGGA otherwise we don't get the number of satellites we can currently see
-        GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);    // 1, 5, 10 second GPS updates: PMTK_SET_NMEA_UPDATE_1HZ, PMTK_SET_NMEA_UPDATE_200_MILLIHERTZ, PMTK_SET_NMEA_UPDATE_100_MILLIHERTZ
-        GPS.sendCommand(PGCMD_ANTENNA);
-        // delay(1000);
-        GPSSerial.println(PMTK_Q_RELEASE);
         optionValue = 0;
       }
 
@@ -2437,6 +3072,30 @@ void UpdateDisplay(byte forceUpdate)
       }
 
       ExtendTextDisplay = 1;
+    }
+    else if (menuItem == BedtimeMenuItem)
+    {
+      if (optionValue != 0)
+      {
+        // Adjust bedtime in half-hour steps, wrapping between the limits
+        if ((optionValue < 0) && (BedtimeMinutes <= BedtimeEarliestMinutes))
+        {
+          BedtimeMinutes = BedtimeLatestMinutes;
+        }
+        else if ((optionValue > 0) && (BedtimeMinutes >= BedtimeLatestMinutes))
+        {
+          BedtimeMinutes = BedtimeEarliestMinutes;
+        }
+        else
+        {
+          BedtimeMinutes += 30 * optionValue;
+        }
+
+        optionValue = 0;
+        forceUpdate = 1;
+      }
+
+      TimeDisplay(22, forceUpdate); // Show bedtime, in clock-time style
     }
     else if (menuItem == SetYearMenuItem)
     {
@@ -2636,7 +3295,7 @@ void TimeDisplay(byte DisplayModeLocal, byte forceUpdateCopy)
     DisplayModePhaseCount++;
   }
 
-  if ((DisplayModeLocal <= 4) || (DisplayModeLocal == 20))
+  if ((DisplayModeLocal <= 4) || (DisplayModeLocal == 20) || (DisplayModeLocal == 22))
   {
     // Normal time display OR Alarm time display
     // DisplayModeLocal 0: Standard-mode time-of-day display
@@ -2644,11 +3303,16 @@ void TimeDisplay(byte DisplayModeLocal, byte forceUpdateCopy)
     // DisplayModeLocal 2: Standard-mode time-of-day display + flashing separator
     // DisplayModeLocal 3: Time-of-day w/ seconds spinner + flashing separator
     // DisplayModeLocal 20: Standard-mode alarm-time display
+    // DisplayModeLocal 22: Bedtime display (for the config menu)
     byte HrNowTens,  HrNowOnes, MinNowTens,  MinNowOnes;
 
     if (DisplayModeLocal == 20)
     {
       temp = AlarmTimeHr;
+    }
+    else if (DisplayModeLocal == 22)
+    {
+      temp = BedtimeMinutes / 60;
     }
     else
     {
@@ -2685,6 +3349,10 @@ void TimeDisplay(byte DisplayModeLocal, byte forceUpdateCopy)
     if (DisplayModeLocal == 20)
     {
       temp = AlarmTimeMin;
+    }
+    else if (DisplayModeLocal == 22)
+    {
+      temp = BedtimeMinutes % 60;
     }
     else
     {
@@ -3036,6 +3704,7 @@ void ApplyDefaults(void)
   NightLightType =  a5NightLightTypeDefault;
   numberCharSet =   a5NumberCharSetDefault;
   GPSMode =         a5GPSModeDefault;
+  BedtimeMinutes =  a5BedtimeDefault;
 }
 
 void EEReadSettings(void)
@@ -3151,6 +3820,19 @@ void EEReadSettings(void)
   {
     GPSMode = value;
   }
+
+  // Note: EEPROM addresses 10-15 hold the cached GPS location (see EEReadLocation).
+
+  value = EEPROM.read(16);  // Bedtime, stored as half-hours past midnight
+
+  if ((value < (BedtimeEarliestMinutes / 30)) || (value > (BedtimeLatestMinutes / 30)))
+  {
+    BedtimeMinutes = a5BedtimeDefault;
+  }
+  else
+  {
+    BedtimeMinutes = value * 30;
+  }
 }
 
 void EESaveSettings(void)
@@ -3242,6 +3924,14 @@ void EESaveSettings(void)
     if (GPSMode != value)
     {
       a5writeEEPROM(9, GPSMode);
+      indicateEEPROMwritten = 1;
+    }
+
+    value = EEPROM.read(16);
+
+    if ((BedtimeMinutes / 30) != value)
+    {
+      a5writeEEPROM(16, BedtimeMinutes / 30);
       indicateEEPROMwritten = 1;
     }
 
