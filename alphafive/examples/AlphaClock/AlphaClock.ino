@@ -21,28 +21,27 @@
 
     ------------------------------------------------------------
 
-    Target: ATmega644[potentially with suffixes], clock at 16 MHz.
+    Target: ATmega1284 (upgraded from the original ATmega644), clock at 16 MHz.
 
     Environment
-
-    Designed to work with Arduino 1.8; untested with other versions.
 
     Install the MightyCore additions for Arduino:
     https://github.com/MCUdude/MightyCore#how-to-install
 
-    Tools > Board> MightyCore: ATmega644
+    Tools > Board> MightyCore: ATmega1284
     Clock: External 16 MHz
     BOD: 2.7V
-    Variant: 644 (select the actual chip on your board)
+    Variant: 1284 (select the actual chip on your board)
     Pinout: Sanguino pinout
 
-    Download and install the Time library:
-    https://github.com/PaulStoffregen/Time
+    Required libraries (see README.md for the versions in use):
 
-    Download and install the DS1307 library:
-    https://github.com/PaulStoffregen/DS1307RTC
+    Time library:         https://github.com/PaulStoffregen/Time
+    DS1307RTC library:    https://github.com/PaulStoffregen/DS1307RTC
+    Adafruit GPS library: https://github.com/adafruit/Adafruit_GPS
+    Timezone library:     https://github.com/JChristensen/Timezone
 
-    (The above two can be added to your regular Arduino libraries folder.)
+    (The above can be added to your regular Arduino libraries folder.)
 
     For additional requirements, please see:
     http://wiki.evilmadscience.com/Alpha_Clock_Firmware_v2
