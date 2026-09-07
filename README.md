@@ -20,6 +20,8 @@ The firmware sketch is [`alphafive/examples/AlphaClock/AlphaClock.ino`](alphafiv
 - Arduino IDE with [MightyCore](https://github.com/MCUdude/MightyCore) (currently 3.1.0)
 - Board settings: **ATmega1284**, Clock: **External 16 MHz**, Pinout: **Sanguino**, BOD: 2.7V
 - The bootloader uploads at 57600 baud
+- Serial monitor: **19200 baud** (set by `a5Init()` in the alphafive library). The clock
+  prints its startup banner, GPS sync messages, and the daily sunrise/sunset times here.
 
 Command-line compile (using the Arduino IDE's bundled CLI):
 
