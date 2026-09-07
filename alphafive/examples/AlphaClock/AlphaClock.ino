@@ -21,6 +21,35 @@
 
     ------------------------------------------------------------
 
+    ------------------------------------------------------------
+
+    Modifications in this fork (see README.md for full details):
+
+    - GPS time sync: an Adafruit GPS module on Serial1 sets the clock once
+      a minute, and the US time zone (with DST rules) is selected
+      automatically from the GPS location.  The location and time zone are
+      cached in EEPROM (addresses 10-15) so both work from power-up.
+
+    - Brightness schedule: brightness steps down from sunset to bedtime,
+      stays at minimum overnight, and steps back up from astronomical dawn
+      to sunrise.  Bedtime is set from the "BED TIME" menu item (half-hour
+      steps, 7:00-11:30 PM; EEPROM address 16).  Without a known location,
+      fixed fallback times are used (9-10 PM down, 6:30-8 AM up).
+
+      The clock keeps two brightness values: the live display brightness,
+      driven by the schedule, and a saved DAYTIME brightness (EEPROM
+      address 0), which the morning ramp climbs to.  The + and - buttons
+      set the saved daytime brightness ONLY during the day phase.  At
+      night or during a ramp they adjust the display temporarily, until
+      the next phase begins, without changing the daytime setting.
+
+    - Selecting an alarm tone in the menu plays a short preview of it.
+
+    - Reliability: watchdog timer, hourly (not per-minute) RTC writes,
+      and no heap allocation in the GPS parsing path.
+
+    ------------------------------------------------------------
+
     Target: ATmega1284 (upgraded from the original ATmega644), clock at 16 MHz.
 
     Environment
@@ -47,7 +76,8 @@
     http://wiki.evilmadscience.com/Alpha_Clock_Firmware_v2
 
     Note in particular that the Alpha Clock Five bootloader uses
-    a typical upload speed of 57200 baud.
+    a typical upload speed of 57200 baud.  The serial monitor, by
+    contrast, runs at 19200 baud (set by a5Init() in the alphafive library).
 
     ------------------------------------------------------------
 
