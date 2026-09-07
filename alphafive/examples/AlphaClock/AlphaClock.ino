@@ -296,8 +296,8 @@ int8_t optionValue;
 #define SetSecondsMenuItem 9
 #define AltModeMenuItem 10
 #define GPSModeMenuItem 11
-#define BedtimeMenuItem 12
-#define TimeZoneMenuItem 13
+#define TimeZoneMenuItem 12   // Right after GPS, since it qualifies the GPS-derived zone
+#define BedtimeMenuItem 13
 
 // Clock display mode:
 int8_t DisplayMode;
