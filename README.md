@@ -86,6 +86,10 @@ Note that replacing the battery itself cuts the RTC's power, so the warning
 will show once on the first power-up after a battery change — press any button
 to dismiss it.
 
+The check assumes a DS3231. If the RTC is a DS1307 (where that register is just
+battery-backed RAM), set `RTCIsDS3231` to 0 near the top of the sketch to
+disable the check and avoid false warnings.
+
 ## EEPROM map
 
 | Address | Contents |

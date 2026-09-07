@@ -144,6 +144,12 @@
 #define a5GPSModeDefault 0          // GPS off
 #define a5BedtimeDefault (22 * 60)  // Fully dimmed by 10:00 PM
 
+// Hardware configuration:
+#define RTCIsDS3231 1   // 1: the RTC is a DS3231 (ChronoDot), which has the Oscillator
+                        //    Stop Flag used for the backup-battery check.
+                        // 0: a DS1307, where that register is just battery-backed RAM;
+                        //    the battery check is disabled to avoid false warnings.
+
 #define USERNAME "GLENN"    // Greeting name used at startup
 #define BIRTHDAY_MONTH 8    // What month and day to wish you a happy birthday
 #define BIRTHDAY_DAY 3
@@ -1355,19 +1361,17 @@ void DisplayWordSequence(byte sequence)
       break;
 
     case 10:    // Say "HELLO" "GLENN"
+      // (Each word is listed for two steps so it shows for ~1.6 s, matching the holiday messages.
+      //  The old need to list HELLO twice was because milliTemp was stale during setup().)
       if (wordSequenceStep < 3)
-      {
-        DisplayWord("HELLO", 800);    // not sure why I need to say hello twice for it to show up once, but whatever gets the job done...
-      }
-      else if (wordSequenceStep < 5)
       {
         DisplayWord("HELLO", 800);
       }
-      else if (wordSequenceStep < 7)
+      else if (wordSequenceStep < 5)
       {
         DisplayWord(USERNAME, 800);
       }
-      else if (wordSequenceStep < 9)
+      else if (wordSequenceStep < 7)
       {
         DisplayWord("     ", 300);
       }
@@ -1636,6 +1640,7 @@ byte RTCOscillatorStopped(void)
   // main and backup power.  Found set at startup, it means the backup battery
   // is dead or missing and the RTC's time cannot be trusted.  There is no way
   // to read the battery voltage itself; this flag is the chip's only signal.
+#if RTCIsDS3231
   byte status;
 
   if (RTCReadStatus(&status) == 0)
@@ -1644,6 +1649,9 @@ byte RTCOscillatorStopped(void)
   }
 
   return (status & 0x80) ? 1 : 0;
+#else
+  return 0;   // Not a DS3231: no status register to read
+#endif
 }
 
 void RTCSetTime(void)
@@ -1652,6 +1660,7 @@ void RTCSetTime(void)
   // that the RTC holds a trustworthy time.  Use this everywhere the RTC is set.
   RTC.set(now());
 
+#if RTCIsDS3231
   byte status;
 
   if (RTCReadStatus(&status) && (status & 0x80))
@@ -1661,6 +1670,7 @@ void RTCSetTime(void)
     Wire.write(status & 0x7F);
     Wire.endTransmission();
   }
+#endif
 }
 
 int8_t selectTimezoneIndex(float lat, float lon)
@@ -2167,6 +2177,9 @@ void setup()
   RedrawNow = 1;
   RedrawNow_NoFade = 0;
   UpdateBrightness = 0;
+  milliTemp = millis();     // DisplayWord() times its words from milliTemp, which loop() normally
+                            // maintains; refresh it here so the greeting doesn't expire instantly.
+
   if (RTCBatteryFailed)
   {
     DisplayWordSequence(18);  // Warn: RTC battery needs replacing
@@ -2193,6 +2206,7 @@ void setup()
     GPSMode = a5GPSModeDefault;
     BedtimeMinutes = a5BedtimeDefault;
     wordSequenceStep = 0;
+    UpdateEE = 1;   // Persist the defaults, so the reset survives the next power cycle
     DisplayWord("*****", 1000);
   }
 
@@ -2358,6 +2372,8 @@ void loop()
             last_rtc_update = millis();
             rtcSyncedFromGPS = 1;
             RTCSetTime();
+            setSyncInterval(3600);    // GPS is the master now: re-read the RTC only hourly, so its
+                                      // whole-second resolution can't jitter the time between GPS syncs
             Serial.print(" and the real-time clock");
           }
 
