@@ -1666,8 +1666,10 @@ void recomputeSunTimes(void)
   float lon = storedLon100 / 100.0;
   time_t tLocal = now();
 
-  // Current UTC offset (including DST), in minutes, from the active time zone
-  int utcOffsetMin = (int)((tLocal - timezones[tzIndex]->toUTC(tLocal)) / 60);
+  // Current UTC offset (including DST), in minutes, from the active time zone.
+  // time_t is unsigned, so the difference must be cast to a signed type before
+  // dividing: for zones west of Greenwich it is negative.
+  int utcOffsetMin = (int)(((int32_t)(tLocal - timezones[tzIndex]->toUTC(tLocal))) / 60);
 
   sunriseMinutes = sunEventMinutes(1, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 90.833);
   sunsetMinutes = sunEventMinutes(0, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 90.833);
