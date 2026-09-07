@@ -74,6 +74,13 @@ is temporary: it lasts until the next phase begins, and it does not alter the
 daytime setting. To change how bright the clock is during the day, adjust it
 during the day.
 
+## Messages
+
+The clock says `HELLO GLENN` at startup (the name is the `USERNAME` define near
+the top of the sketch). On your birthday (`BIRTHDAY_MONTH` / `BIRTHDAY_DAY`) and
+on New Year's Day, it shows a greeting every 20 seconds throughout the morning
+(before noon). Other holidays are present in the code but commented out.
+
 ## RTC backup battery
 
 Neither the DS3231 nor the DS1307 can report its backup-battery voltage. What the
@@ -113,5 +120,5 @@ disable the check and avoid false warnings.
 | 10 | Location-valid marker (0xA5) |
 | 11–12 | Cached latitude (degrees × 100, int16 little-endian) |
 | 13–14 | Cached longitude (degrees × 100, int16 little-endian) |
-| 15 | Time zone index |
+| 15 | Time zone index (informational; re-derived from the cached location at boot) |
 | 16 | Bedtime (half-hours past midnight) |

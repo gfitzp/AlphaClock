@@ -49,6 +49,11 @@
 
     - Selecting an alarm tone in the menu plays a short preview of it.
 
+    - Personalized messages: "HELLO <USERNAME>" at startup, and a happy
+      birthday / holiday greeting every 20 seconds throughout the morning
+      on the relevant date (USERNAME, BIRTHDAY_MONTH and BIRTHDAY_DAY are
+      set near the top of the sketch).
+
     - RTC battery check: the DS3231 cannot report its backup-battery
       voltage, but its Oscillator Stop Flag latches whenever the chip has
       lost all power, i.e. the coin cell could not keep it running while
@@ -1597,7 +1602,7 @@ void SpecialOccasionMessage()
     DisplayWordSequence(18);
   }
 
-  // Only show the message a few times per hour, and only in the morning
+  // Show the message every 20 seconds (three times a minute), mornings only
   if (second() % 20 == 0 && hour() < 12)
   {
     // personal messages
@@ -1898,12 +1903,10 @@ void EEReadLocation(void)
     storedLat100 = (int16_t)(EEPROM.read(EELatAddr) | ((uint16_t)EEPROM.read(EELatAddr + 1) << 8));
     storedLon100 = (int16_t)(EEPROM.read(EELonAddr) | ((uint16_t)EEPROM.read(EELonAddr + 1) << 8));
     locationValid = 1;
-    tzIndex = EEPROM.read(EETzAddr);
 
-    if ((tzIndex < 0) || (tzIndex >= TZCount))
-    {
-      tzIndex = TZEastern;
-    }
+    // Derive the time zone from the cached location rather than trusting the
+    // separately stored byte, so the two can never disagree.
+    tzIndex = selectTimezoneIndex(storedLat100 / 100.0, storedLon100 / 100.0);
   }
 }
 
@@ -2794,6 +2797,12 @@ void processSerialMessage()
               // Set brightness
               c = Serial.read();  // Read input buffer, char 3 of 10
               Brightness = (10 * (c2 - '0') + (c - '0'));
+
+              if (Brightness > BrightnessMax)
+              {
+                Brightness = BrightnessMax;   // Keep within the MBlevel/MBmode tables
+              }
+
               UpdateBrightness = 1;
 
               if (schedulePhaseLast == 0)
@@ -3992,6 +4001,11 @@ void EEReadSettings(void)
   else
   {
     DayBrightness = value - 100;
+  }
+
+  if (DayBrightness == 0)
+  {
+    DayBrightness = 1;    // A saved 0 (dark display) would make the daytime target fully dark
   }
 
   Brightness = DayBrightness;
