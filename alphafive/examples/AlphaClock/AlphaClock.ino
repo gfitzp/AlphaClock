@@ -46,10 +46,10 @@
       address 16): OFF, or any half hour of the day.  It is entered in the
       clock's own time, so a clock set to UTC takes its bedtime in UTC
       (10:30 PM EDT = 2:30 AM) and the schedule works across midnight.
-      OFF disables the schedule for a constant brightness, which the + and
-      - buttons then set directly.  Without a known location, fixed
-      fallback windows are used (the hour before bedtime down, 6:30-8 AM
-      up).
+      OFF disables the schedule for a constant brightness: the display
+      settles at the saved daytime brightness, which the + and - buttons
+      then set directly.  Without a known location, fixed fallback windows
+      are used (the hour before bedtime down, 6:30-8 AM up).
 
       The clock keeps two brightness values: the live display brightness,
       driven by the schedule, and a saved DAYTIME brightness (EEPROM
@@ -67,9 +67,12 @@
 
     - Selecting an alarm tone in the menu plays a short preview of it.
 
-    - Configuration menu: holding + or - repeats the step (after about
-      0.6 s, four steps per second) on items with a range of values, such
-      as BED TIME, TIME ZONE and the date/seconds settings.  The on/off
+    - Configuration menu: hold + and - together for two seconds to enter
+      (and to leave) it.  The time-set button moves to the next item, the
+      alarm-set button to the previous one, and + / - change the current
+      item's value.  Holding + or - repeats the step (after about 0.6 s,
+      four steps per second) on items with a range of values, such as
+      BED TIME, TIME ZONE and the date/seconds settings.  The on/off
       items (AM/PM, TEST SOUND, GPS) do not repeat.
 
     - Personalized messages: "HELLO <USERNAME>" at startup, and a happy
