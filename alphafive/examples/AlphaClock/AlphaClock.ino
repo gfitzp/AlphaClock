@@ -1967,8 +1967,12 @@ void setup()
   }
 
   // Bound every I2C transaction: a bus glitch becomes a 25 ms error instead
-  // of a hang (and the watchdog reset that would follow).
+  // of a hang (and the watchdog reset that would follow).  MightyCore's Wire
+  // library only provides this when built with WIRE_TIMEOUT defined; without
+  // it, the watchdog remains the safety net.
+#if defined(WIRE_TIMEOUT)
   Wire.setWireTimeout(25000, true);
+#endif
   UseRTC = a5CheckForRTC();
 
   if (UseRTC)
