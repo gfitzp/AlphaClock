@@ -46,11 +46,35 @@ Install the external libraries into your Arduino libraries folder
 (`~/Documents/Arduino/libraries` on macOS). The `alphafive` library must also be
 present there for the IDE to find it; keep that copy in sync with this repo.
 
+## Brightness schedule
+
+The display brightness follows the sun, using the GPS location cached in EEPROM:
+
+- **Evening:** starting at sunset, brightness steps down one level at a time,
+  reaching the minimum at **bedtime** (set from the `BED TIME` menu item in
+  half-hour steps between 7:00 PM and 11:30 PM; default 10:00 PM).
+- **Night:** minimum brightness.
+- **Morning:** starting at astronomical dawn, brightness steps back up, reaching
+  the full daytime level at sunrise.
+
+Without a known location (before the first-ever GPS fix), fixed fallback times
+are used: down from 9:00 to 10:00 PM, up from 6:30 to 8:00 AM.
+
+**Setting the daytime brightness:** the clock keeps two brightness values — the
+live display brightness, which the schedule drives, and a saved *daytime*
+brightness, which is the level the morning ramp climbs to and the only one
+stored in EEPROM. The **+** and **−** buttons set the saved daytime brightness
+**only during the day phase** (between sunrise and sunset). Pressing them at
+night or during a ramp still adjusts the display immediately, but the change
+is temporary: it lasts until the next phase begins, and it does not alter the
+daytime setting. To change how bright the clock is during the day, adjust it
+during the day.
+
 ## EEPROM map
 
 | Address | Contents |
 |---|---|
-| 0 | Brightness (+100) |
+| 0 | Daytime brightness (+100) |
 | 1 | 12/24-hour mode |
 | 2 | Alarm enabled |
 | 3 | Alarm hour (+100) |
