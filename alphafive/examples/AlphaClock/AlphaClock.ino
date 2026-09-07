@@ -29,6 +29,10 @@
       a minute, and the US time zone (with DST rules) is selected
       automatically from the GPS location.  The location and time zone are
       cached in EEPROM (addresses 10-15) so both work from power-up.
+      The automatic selection uses approximate boundaries, so near a zone
+      line it can be wrong; the "TIME ZONE" menu item (EEPROM address 17)
+      can pin any US zone, or UTC, instead of AUTO.  A change takes effect
+      immediately.
 
     - Brightness schedule: brightness steps down from sunset to bedtime,
       stays at minimum overnight, and steps back up from astronomical dawn
@@ -159,6 +163,7 @@
 #define a5DisplayModeDefault 0
 #define a5GPSModeDefault 0          // GPS off
 #define a5BedtimeDefault (22 * 60)  // Fully dimmed by 10:00 PM
+#define a5TimeZoneDefault 0         // AUTO: time zone from the GPS location
 
 // Hardware configuration:
 #define RTCIsDS3231 1   // 1: the RTC is a DS3231 (ChronoDot), which has the Oscillator
@@ -200,6 +205,7 @@ TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -480};     // UTC - 8 hours
 TimeChangeRule usAKDT = {"AKDT", Second, Sun, Mar, 2, -480};  // UTC - 8 hours
 TimeChangeRule usAKST = {"AKST", First, Sun, Nov, 2, -540};   // UTC - 9 hours
 TimeChangeRule usHST = {"HST", First, Sun, Nov, 2, -600};     // UTC - 10 hours
+TimeChangeRule utcRule = {"UTC", First, Sun, Nov, 2, 0};      // UTC itself
 
 Timezone usEastern(usEDT, usEST);
 Timezone usCentral(usCDT, usCST);
@@ -208,6 +214,7 @@ Timezone usArizona(usMST);          // Arizona: Mountain Standard Time year-roun
 Timezone usPacific(usPDT, usPST);
 Timezone usAlaska(usAKDT, usAKST);
 Timezone usHawaii(usHST);           // Hawaii: no DST
+Timezone tzUTC(utcRule);            // No offset, no DST
 
 #define TZEastern 0
 #define TZCentral 1
@@ -216,14 +223,23 @@ Timezone usHawaii(usHST);           // Hawaii: no DST
 #define TZPacific 4
 #define TZAlaska 5
 #define TZHawaii 6
-#define TZCount 7
+#define TZUTC 7
+#define TZCount 8
 
 Timezone* const timezones[] =
 {
-  &usEastern, &usCentral, &usMountain, &usArizona, &usPacific, &usAlaska, &usHawaii
+  &usEastern, &usCentral, &usMountain, &usArizona, &usPacific, &usAlaska, &usHawaii, &tzUTC
 };
 
-int8_t tzIndex = TZEastern;
+int8_t tzIndex = TZEastern;   // Zone derived from the GPS location (used when TimeZoneSetting is AUTO)
+
+// Manual time zone selection, from the "TIME ZONE" menu item (EEPROM address 17):
+// 0 = AUTO (derive from the GPS location); 1..TZCount = pin the zone timezones[TimeZoneSetting - 1].
+byte TimeZoneSetting;
+const char* const TimeZoneMenuNames[] =
+{
+  "AUTO ", "EASTN", "CENTL", "MOUNT", "ARIZN", "PACIF", "ALASK", "HAWAI", " UTC "
+};
 
 // GPS location cache, for time zone selection and the sunrise/sunset calculation.
 // Cached in EEPROM (addresses 10-15) so both work at power-up, before the first GPS fix.
@@ -266,7 +282,7 @@ unsigned int NightLightStep;
 // Configuration menu:
 byte menuItem;              // Current position within options menu
 int8_t optionValue;
-#define MenuItemsMax 12
+#define MenuItemsMax 13
 
 #define AMPM24HRMenuItem 0
 #define NightLightMenuItem 1
@@ -281,6 +297,7 @@ int8_t optionValue;
 #define AltModeMenuItem 10
 #define GPSModeMenuItem 11
 #define BedtimeMenuItem 12
+#define TimeZoneMenuItem 13
 
 // Clock display mode:
 int8_t DisplayMode;
@@ -933,6 +950,10 @@ void DisplayMenuOptionName(void)
       DisplayWordSequence(17);  // Bed Time
       break;
 
+    case TimeZoneMenuItem:
+      DisplayWordSequence(19);  // Time Zone
+      break;
+
     default:  // do nothing!
       break;
   }
@@ -1545,6 +1566,26 @@ void DisplayWordSequence(byte sequence)
 
       break;
 
+    case 19:    // Display "TIME " "ZONE "
+      if (wordSequenceStep == 1)
+      {
+        DisplayWord("TIME ", 600);
+      }
+      else if (wordSequenceStep == 3)
+      {
+        DisplayWord("ZONE ", 600);
+      }
+      else if (wordSequenceStep < 5)
+      {
+        DisplayWord("     ", 100);
+      }
+      else
+      {
+        wordSequence = 0;
+      }
+
+      break;
+
     case 18:    // Display " RTC " "BATT " "DEAD " -- the RTC's backup battery failed
       if (wordSequenceStep < 3)
       {
@@ -1704,6 +1745,17 @@ void RTCSetTime(void)
 #endif
 }
 
+int8_t activeTimezoneIndex(void)
+{
+  // The zone in use: the manual selection if one is set, else the one derived from the GPS location.
+  if (TimeZoneSetting == 0)
+  {
+    return tzIndex;
+  }
+
+  return TimeZoneSetting - 1;
+}
+
 int8_t selectTimezoneIndex(float lat, float lon)
 {
   // Approximate US time zone selection from GPS coordinates.
@@ -1838,7 +1890,7 @@ void recomputeSunTimes(void)
 {
   time_t tLocal = now();
   lastSunCalcDayNumber = elapsedDays(tLocal);
-  lastSunCalcDST = timezones[tzIndex]->locIsDST(tLocal);
+  lastSunCalcDST = timezones[activeTimezoneIndex()]->locIsDST(tLocal);
 
   if (locationValid == 0)
   {
@@ -1854,7 +1906,7 @@ void recomputeSunTimes(void)
   // Current UTC offset (including DST), in minutes, from the active time zone.
   // time_t is unsigned, so the difference must be cast to a signed type before
   // dividing: for zones west of Greenwich it is negative.
-  int utcOffsetMin = (int)(((int32_t)(tLocal - timezones[tzIndex]->toUTC(tLocal))) / 60);
+  int utcOffsetMin = (int)(((int32_t)(tLocal - timezones[activeTimezoneIndex()]->toUTC(tLocal))) / 60);
 
   sunriseMinutes = sunEventMinutes(1, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 90.833);
   sunsetMinutes = sunEventMinutes(0, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 90.833);
@@ -1960,7 +2012,16 @@ void updateLocationFromGPS(void)
   Serial.print(", ");
   Serial.print(lon, 2);
   Serial.print("  Time zone: ");
-  Serial.println(tzNames[tzIndex]);
+  Serial.print(tzNames[tzIndex]);
+
+  if (TimeZoneSetting != 0)
+  {
+    Serial.print(" (overridden by the TIME ZONE menu setting: ");
+    Serial.print(TimeZoneMenuNames[TimeZoneSetting]);
+    Serial.print(")");
+  }
+
+  Serial.println();
 }
 
 void applySunSchedule(void)
@@ -1985,7 +2046,7 @@ void applySunSchedule(void)
   // first setting the clock), and when DST switches during the day.
   time_t tNow = now();
 
-  if ((elapsedDays(tNow) != lastSunCalcDayNumber) || (timezones[tzIndex]->locIsDST(tNow) != lastSunCalcDST))
+  if ((elapsedDays(tNow) != lastSunCalcDayNumber) || (timezones[activeTimezoneIndex()]->locIsDST(tNow) != lastSunCalcDST))
   {
     recomputeSunTimes();
   }
@@ -2317,6 +2378,7 @@ void setup()
     DisplayMode = a5DisplayModeDefault;
     GPSMode = a5GPSModeDefault;
     BedtimeMinutes = a5BedtimeDefault;
+    TimeZoneSetting = a5TimeZoneDefault;
     wordSequenceStep = 0;
     UpdateEE = 1;   // Persist the defaults, so the reset survives the next power cycle
     DisplayWord("*****", 1000);
@@ -2376,7 +2438,7 @@ void loop()
         // Convert the GPS time into Unix epoch time
         utc_time = makeTime({GPS.seconds, GPS.minute, GPS.hour, 0, GPS.day, GPS.month, CalendarYrToTm(2000 + GPS.year)}); // '0' because makeTime() needs a weekday
         // Convert the Unix epoch time to the local time, using the time zone chosen from the GPS location
-        local_time = timezones[tzIndex]->toLocal(utc_time);
+        local_time = timezones[activeTimezoneIndex()]->toLocal(utc_time);
         // Serial.print("Local time: "); Serial.println(local_time);
 
         // Update the time once a minute
@@ -2384,7 +2446,7 @@ void loop()
         {
           last_gps_update = millis(); // Reset the timer
           updateLocationFromGPS();    // Refresh cached location / time zone, if the clock has moved
-          local_time = timezones[tzIndex]->toLocal(utc_time);   // Recompute, in case the time zone just changed
+          local_time = timezones[activeTimezoneIndex()]->toLocal(utc_time);   // Recompute, in case the time zone just changed
           Serial.println();
           Serial.print("UTC time from GPS: ");
           Serial.print(2000 + GPS.year);
@@ -3395,6 +3457,46 @@ void UpdateDisplay(byte forceUpdate)
 
       TimeDisplay(22, forceUpdate); // Show bedtime, in clock-time style
     }
+    else if (menuItem == TimeZoneMenuItem)
+    {
+      if (optionValue != 0)
+      {
+        int8_t oldIndex = activeTimezoneIndex();
+        int8_t setting = (int8_t)TimeZoneSetting + optionValue;
+
+        if (setting < 0)
+        {
+          setting = TZCount;    // Wrap: AUTO, then each zone in turn
+        }
+        else if (setting > TZCount)
+        {
+          setting = 0;
+        }
+
+        TimeZoneSetting = setting;
+        int8_t newIndex = activeTimezoneIndex();
+
+        if (newIndex != oldIndex)
+        {
+          // Re-express the current local time in the new zone, so the change
+          // shows immediately rather than waiting for the next GPS sync.
+          time_t utc = timezones[oldIndex]->toUTC(now());
+          setTime(timezones[newIndex]->toLocal(utc));
+
+          if (UseRTC)
+          {
+            RTCSetTime();
+          }
+
+          recomputeSunTimes();
+        }
+
+        optionValue = 0;
+      }
+
+      DisplayWord((char*)TimeZoneMenuNames[TimeZoneSetting], 500);
+      ExtendTextDisplay = 1;
+    }
     else if (menuItem == SetYearMenuItem)
     {
       if (optionValue != 0)
@@ -4011,6 +4113,7 @@ void ApplyDefaults(void)
   numberCharSet =   a5NumberCharSetDefault;
   GPSMode =         a5GPSModeDefault;
   BedtimeMinutes =  a5BedtimeDefault;
+  TimeZoneSetting = a5TimeZoneDefault;
 }
 
 void EEReadSettings(void)
@@ -4146,6 +4249,17 @@ void EEReadSettings(void)
   {
     BedtimeMinutes = value * 30;
   }
+
+  value = EEPROM.read(17);  // Time zone setting: 0 = AUTO, 1..TZCount = pinned zone
+
+  if (value > TZCount)
+  {
+    TimeZoneSetting = a5TimeZoneDefault;
+  }
+  else
+  {
+    TimeZoneSetting = value;
+  }
 }
 
 void EESaveSettings(void)
@@ -4246,6 +4360,14 @@ void EESaveSettings(void)
     if ((BedtimeMinutes / 30) != value)
     {
       a5writeEEPROM(16, BedtimeMinutes / 30);
+      indicateEEPROMwritten = 1;
+    }
+
+    value = EEPROM.read(17);
+
+    if (TimeZoneSetting != value)
+    {
+      a5writeEEPROM(17, TimeZoneSetting);
       indicateEEPROMwritten = 1;
     }
 

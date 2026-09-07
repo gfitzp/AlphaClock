@@ -46,6 +46,20 @@ Install the external libraries into your Arduino libraries folder
 (`~/Documents/Arduino/libraries` on macOS). The `alphafive` library must also be
 present there for the IDE to find it; keep that copy in sync with this repo.
 
+## Time zone
+
+With GPS on, the US time zone (including its DST rules) is chosen automatically
+from the GPS location. The selection uses approximate boundaries — longitude
+bands plus a box for Arizona — so near a zone line (the Florida panhandle,
+parts of Indiana, far west Texas, the Idaho panhandle, the Navajo Nation) it can
+pick the wrong zone.
+
+The **TIME ZONE** menu item overrides it. Cycle with **+**/**−** through `AUTO`,
+`EASTN`, `CENTL`, `MOUNT`, `ARIZN` (no DST), `PACIF`, `ALASK`, `HAWAI` (no DST),
+and `UTC`. A pinned zone takes effect immediately (the displayed time shifts
+without waiting for the next GPS sync), is saved to EEPROM, and is used for the
+sunrise/sunset schedule as well. `AUTO` restores location-based selection.
+
 ## Brightness schedule
 
 The display brightness follows the sun, using the GPS location cached in EEPROM:
@@ -124,3 +138,4 @@ disable the check and avoid false warnings.
 | 13–14 | Cached longitude (degrees × 100, int16 little-endian) |
 | 15 | Time zone index (informational; re-derived from the cached location at boot) |
 | 16 | Bedtime (half-hours past midnight) |
+| 17 | Time zone setting (0 = AUTO, 1–8 = pinned zone) |
