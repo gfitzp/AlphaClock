@@ -3569,6 +3569,7 @@ void UpdateDisplay(byte forceUpdate)
           UpdateBrightness = 1;
         }
 
+        lastScheduleMinute = 61;    // Re-evaluate the schedule on the next pass, not at the next minute
         optionValue = 0;
         forceUpdate = 1;
       }
@@ -3615,6 +3616,7 @@ void UpdateDisplay(byte forceUpdate)
           }
 
           recomputeSunTimes();
+          lastScheduleMinute = 61;  // Re-evaluate the schedule on the next pass, not at the next minute
         }
 
         optionValue = 0;
