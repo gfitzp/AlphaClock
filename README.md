@@ -65,14 +65,22 @@ sunrise/sunset schedule as well. `AUTO` restores location-based selection.
 The display brightness follows the sun, using the GPS location cached in EEPROM:
 
 - **Evening:** starting at sunset, brightness steps down one level at a time,
-  reaching the minimum at **bedtime** (set from the `BED TIME` menu item in
-  half-hour steps between 7:00 PM and 11:30 PM; default 10:00 PM).
+  reaching the minimum at **bedtime** (set from the `BED TIME` menu item; default
+  10:00 PM).
 - **Night:** minimum brightness.
 - **Morning:** starting at astronomical dawn, brightness steps back up, reaching
   the full daytime level at sunrise.
 
-Without a known location (before the first-ever GPS fix), fixed fallback times
-are used: down from 9:00 to 10:00 PM, up from 6:30 to 8:00 AM.
+`BED TIME` cycles with **+**/**−** through `OFF`, then every half hour of the day
+from 12:00 AM to 11:30 PM, and back to `OFF`. Bedtime is entered in the clock's
+own time, so if the clock is set to UTC, enter your bedtime in UTC — 10:30 PM
+Eastern Daylight Time is a `2:30 AM` bedtime — and the schedule works the same
+way across midnight. **`OFF`** disables the schedule entirely: the display holds
+a constant brightness (it settles at the saved daytime level when you select
+`OFF`), and the **+**/**−** buttons simply set that brightness.
+
+Without a known location (before the first-ever GPS fix), fixed fallback windows
+are used: down over the hour before bedtime, up from 6:30 to 8:00 AM.
 
 Every brightness change fades rather than blinking, including across the
 display's hardware drive-mode boundaries (between manual levels 5/6 and 7/8),
@@ -137,5 +145,5 @@ disable the check and avoid false warnings.
 | 11–12 | Cached latitude (degrees × 100, int16 little-endian) |
 | 13–14 | Cached longitude (degrees × 100, int16 little-endian) |
 | 15 | Time zone index (informational; re-derived from the cached location at boot) |
-| 16 | Bedtime (half-hours past midnight) |
+| 16 | Bedtime (half-hours past midnight, 0–47; 48 = OFF) |
 | 17 | Time zone setting (0 = AUTO, 1–8 = pinned zone) |

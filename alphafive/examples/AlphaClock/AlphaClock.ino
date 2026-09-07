@@ -42,9 +42,14 @@
 
     - Brightness schedule: brightness steps down from sunset to bedtime,
       stays at minimum overnight, and steps back up from astronomical dawn
-      to sunrise.  Bedtime is set from the "BED TIME" menu item (half-hour
-      steps, 7:00-11:30 PM; EEPROM address 16).  Without a known location,
-      fixed fallback times are used (9-10 PM down, 6:30-8 AM up).
+      to sunrise.  Bedtime is set from the "BED TIME" menu item (EEPROM
+      address 16): OFF, or any half hour of the day.  It is entered in the
+      clock's own time, so a clock set to UTC takes its bedtime in UTC
+      (10:30 PM EDT = 2:30 AM) and the schedule works across midnight.
+      OFF disables the schedule for a constant brightness, which the + and
+      - buttons then set directly.  Without a known location, fixed
+      fallback windows are used (the hour before bedtime down, 6:30-8 AM
+      up).
 
       The clock keeps two brightness values: the live display brightness,
       driven by the schedule, and a saved DAYTIME brightness (EEPROM
@@ -378,12 +383,16 @@ const byte ModeCrossingLevel[] = {10, 1};
 // In the evening, brightness ramps down step by step, starting at sunset and
 // reaching minimum brightness at bedtime.  In the morning it ramps back up,
 // starting at astronomical dawn and reaching full brightness at sunrise.
-// Bedtime is set from the configuration menu ("BED TIME"), in half-hour
-// steps between 7:00 PM and 11:30 PM, and is stored in EEPROM.
+// Bedtime is set from the configuration menu ("BED TIME"): any half hour of
+// the day, so a clock running on UTC can still dim at a local bedtime (and
+// bedtime may therefore fall after midnight), or OFF for a constant
+// brightness.  Stored in EEPROM.
 unsigned int BedtimeMinutes = a5BedtimeDefault;
-#define BedtimeEarliestMinutes (19 * 60)      // 7:00 PM
-#define BedtimeLatestMinutes (23 * 60 + 30)   // 11:30 PM
-#define MinEveningRampMinutes 30        // Shortest evening ramp (if sunset is at/after bedtime)
+#define BedtimeOff 0xFFFF               // BedtimeMinutes value meaning "schedule off"
+#define BedtimeOffEEValue 48            // EEPROM encoding of OFF (times are 0-47 half-hours)
+#define MinEveningRampMinutes 30        // Shortest evening ramp (if bedtime is at/before sunset)
+#define MaxEveningRampMinutes (12 * 60) // A longer sunset-to-bedtime gap means bedtime is really before sunset
+#define MaxMorningRampMinutes (4 * 60)  // Astronomical twilight never lasts longer than this
 #define DefaultMorningRampMinutes 90    // Morning ramp length if astronomical dawn is unavailable
 #define FallbackDawnMinutes (8 * 60)    // Full brightness by 8:00 AM if sunrise is unknown
 
@@ -2039,7 +2048,8 @@ void applySunSchedule(void)
   //   Morning ramp: step up from minimum, astronomical dawn -> sunrise, reaching daytime brightness at sunrise
   // Each step uses the display's normal fade, so the ramps feel continuous.
   // A manual brightness change suspends the schedule until the next phase begins.
-  // Without a known GPS location, falls back to fixed times (9-10 PM down, 6:30-8 AM up).
+  // Without a known GPS location, falls back to fixed windows (the hour before
+  // bedtime down, 6:30-8 AM up).  With bedtime OFF, brightness is left alone.
 
   if (minute() == lastScheduleMinute)
   {
@@ -2057,58 +2067,90 @@ void applySunSchedule(void)
     recomputeSunTimes();
   }
 
-  // Evening ramp window: sunset to bedtime
-  int eveEnd = BedtimeMinutes;
-  int eveStart = (sunsetMinutes >= 0) ? sunsetMinutes : (BedtimeMinutes - 60);
-
-  if (eveStart > eveEnd - MinEveningRampMinutes)
+  if (BedtimeMinutes == BedtimeOff)
   {
-    eveStart = eveEnd - MinEveningRampMinutes;    // Keep a minimum ramp length (high-latitude summers)
+    // Schedule off: constant brightness.  Stay in the "day" phase so the
+    // buttons set the saved daytime brightness, and forget any ramp state
+    // so that re-enabling the schedule starts fresh.
+    schedulePhaseLast = 0;
+    scheduleOverride = 0;
+    lastScheduleTarget = -1;
+    return;
   }
 
-  // Morning ramp window: astronomical dawn to sunrise
+  // All windows are (start, length) on a circular 24-hour timeline, so that
+  // bedtime after midnight -- e.g. a clock running on UTC with a local
+  // bedtime -- works the same as one before it.
+  int bedtime = BedtimeMinutes;
+
+  // Evening ramp: sunset to bedtime
+  int eveStart = 0;
+  int eveLen = 0;
+
+  if (sunsetMinutes >= 0)
+  {
+    eveStart = sunsetMinutes;
+    eveLen = (bedtime - sunsetMinutes + 1440) % 1440;
+  }
+
+  if ((eveLen == 0) || (eveLen > MaxEveningRampMinutes))
+  {
+    // No sunset known, or bedtime is at/before sunset (high-latitude summer):
+    // dim over the last stretch before bedtime instead.
+    eveLen = (sunsetMinutes >= 0) ? MinEveningRampMinutes : 60;
+    eveStart = (bedtime + 1440 - eveLen) % 1440;
+  }
+  else if (eveLen < MinEveningRampMinutes)
+  {
+    eveLen = MinEveningRampMinutes;
+    eveStart = (bedtime + 1440 - eveLen) % 1440;
+  }
+
+  // Morning ramp: astronomical dawn to sunrise
   int mornEnd = (sunriseMinutes >= 0) ? sunriseMinutes : FallbackDawnMinutes;
-  int mornStart;
+  int mornLen = 0;
 
-  if ((astroDawnMinutes >= 0) && (astroDawnMinutes < mornEnd))
+  if (astroDawnMinutes >= 0)
   {
-    mornStart = astroDawnMinutes;
+    mornLen = (mornEnd - astroDawnMinutes + 1440) % 1440;
   }
-  else
-  {
-    // No astronomical twilight (bright high-latitude nights), or it wrapped
-    // past midnight: use a fixed-length pre-sunrise ramp instead.
-    mornStart = mornEnd - DefaultMorningRampMinutes;
 
-    if (mornStart < 0)
-    {
-      mornStart = 0;
-    }
+  if ((mornLen == 0) || (mornLen > MaxMorningRampMinutes))
+  {
+    mornLen = DefaultMorningRampMinutes;    // No astronomical twilight (bright high-latitude nights)
   }
+
+  int mornStart = (mornEnd + 1440 - mornLen) % 1440;
+
+  // Day: sunrise to sunset
+  int dayLen = (eveStart - mornEnd + 1440) % 1440;
 
   int nowMin = hour() * 60 + minute();
+  int eveElapsed = (nowMin - eveStart + 1440) % 1440;
+  int mornElapsed = (nowMin - mornStart + 1440) % 1440;
+  int dayElapsed = (nowMin - mornEnd + 1440) % 1440;
+
   int8_t dayBright = DayBrightness;
 
   if (dayBright < 1)
   {
     dayBright = 1;    // Never ramp toward a fully dark display
   }
+
   int8_t target;
   byte phase;
 
-  if ((nowMin >= eveStart) && (nowMin < eveEnd))
+  if (eveElapsed < eveLen)
   {
     phase = 1;    // Evening ramp: interpolate dayBright down toward 1, hitting it at bedtime
-    target = dayBright - (int8_t)(((int)(dayBright - 1) * (nowMin - eveStart) + (eveEnd - eveStart) / 2)
-                                  / (eveEnd - eveStart));
+    target = dayBright - (int8_t)(((int)(dayBright - 1) * eveElapsed + eveLen / 2) / eveLen);
   }
-  else if ((nowMin >= mornStart) && (nowMin < mornEnd))
+  else if (mornElapsed < mornLen)
   {
     phase = 3;    // Morning ramp: interpolate 1 up toward dayBright, hitting it at sunrise
-    target = 1 + (int8_t)(((int)(dayBright - 1) * (nowMin - mornStart) + (mornEnd - mornStart) / 2)
-                          / (mornEnd - mornStart));
+    target = 1 + (int8_t)(((int)(dayBright - 1) * mornElapsed + mornLen / 2) / mornLen);
   }
-  else if ((nowMin >= mornEnd) && (nowMin < eveStart))
+  else if (dayElapsed < dayLen)
   {
     phase = 0;    // Day
     target = dayBright;
@@ -3443,25 +3485,44 @@ void UpdateDisplay(byte forceUpdate)
     {
       if (optionValue != 0)
       {
-        // Adjust bedtime in half-hour steps, wrapping between the limits
-        if ((optionValue < 0) && (BedtimeMinutes <= BedtimeEarliestMinutes))
+        // Cycle through OFF, 12:00 AM, 12:30 AM, ... 11:30 PM, and back to OFF
+        if (BedtimeMinutes == BedtimeOff)
         {
-          BedtimeMinutes = BedtimeLatestMinutes;
+          BedtimeMinutes = (optionValue > 0) ? 0 : (23 * 60 + 30);
         }
-        else if ((optionValue > 0) && (BedtimeMinutes >= BedtimeLatestMinutes))
+        else if ((optionValue > 0) && (BedtimeMinutes >= (23 * 60 + 30)))
         {
-          BedtimeMinutes = BedtimeEarliestMinutes;
+          BedtimeMinutes = BedtimeOff;
+        }
+        else if ((optionValue < 0) && (BedtimeMinutes == 0))
+        {
+          BedtimeMinutes = BedtimeOff;
         }
         else
         {
           BedtimeMinutes += 30 * optionValue;
         }
 
+        if (BedtimeMinutes == BedtimeOff)
+        {
+          // Schedule switched off: settle at the daytime brightness
+          Brightness = (DayBrightness > 0) ? DayBrightness : 1;
+          UpdateBrightness = 1;
+        }
+
         optionValue = 0;
         forceUpdate = 1;
       }
 
-      TimeDisplay(22, forceUpdate); // Show bedtime, in clock-time style
+      if (BedtimeMinutes == BedtimeOff)
+      {
+        DisplayWord(" OFF ", 500);
+        ExtendTextDisplay = 1;
+      }
+      else
+      {
+        TimeDisplay(22, forceUpdate); // Show bedtime, in clock-time style
+      }
     }
     else if (menuItem == TimeZoneMenuItem)
     {
@@ -4245,9 +4306,13 @@ void EEReadSettings(void)
 
   // Note: EEPROM addresses 10-15 hold the cached GPS location (see EEReadLocation).
 
-  value = EEPROM.read(16);  // Bedtime, stored as half-hours past midnight
+  value = EEPROM.read(16);  // Bedtime, stored as half-hours past midnight (48 = OFF)
 
-  if ((value < (BedtimeEarliestMinutes / 30)) || (value > (BedtimeLatestMinutes / 30)))
+  if (value == BedtimeOffEEValue)
+  {
+    BedtimeMinutes = BedtimeOff;
+  }
+  else if (value > 47)
   {
     BedtimeMinutes = a5BedtimeDefault;
   }
@@ -4362,10 +4427,11 @@ void EESaveSettings(void)
     }
 
     value = EEPROM.read(16);
+    byte bedtimeValue = (BedtimeMinutes == BedtimeOff) ? BedtimeOffEEValue : (BedtimeMinutes / 30);
 
-    if ((BedtimeMinutes / 30) != value)
+    if (bedtimeValue != value)
     {
-      a5writeEEPROM(16, BedtimeMinutes / 30);
+      a5writeEEPROM(16, bedtimeValue);
       indicateEEPROMwritten = 1;
     }
 
