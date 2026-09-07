@@ -776,7 +776,7 @@ void checkButtons(void)
 
           // IF no other buttons are down, and times have not been adjusted, decrease brightness:
           if (((buttonMonitor & a5_allButtonsButMinus) == 0) && (AlarmTimeChanged + TimeChanged == 0))
-            if (Brightness > 0)
+            if (Brightness > 1)   // Bottom out at the dimmest lit level; never blank the display
             {
               Brightness--;
               UpdateBrightness = 1;
