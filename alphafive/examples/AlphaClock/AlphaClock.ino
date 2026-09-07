@@ -320,9 +320,13 @@ byte holdDebounce;
 byte Brightness;      // Live display brightness (driven by the sunrise/sunset schedule)
 byte DayBrightness;   // The user's daytime brightness setting; the only one saved to EEPROM
 #define BrightnessMax 11
+// Each manual level is a (library level, drive mode) pair.  Modes 0 and 1 pulse the LEDs
+// for ~0.4 us per refresh (57 vs 15 intensity slots); mode 2 leaves them on between
+// refreshes (~15 us), so its dimmest setting is already ~2.5x brighter than mode 1's top.
+// The mode 2 levels (1, 8, 14, 19) are spread to keep the steps roughly even from there.
 byte MBlevel[] =
 {
-  0, 1, 5, 10, 15, 19, 15, 19, 5, 10, 15, 19
+  0, 1, 5, 10, 15, 19, 15, 19, 1, 8, 14, 19
 };
 byte MBmode[]  =
 {
