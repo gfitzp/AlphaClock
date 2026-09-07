@@ -56,7 +56,9 @@
       also clears the flag, so the warning reappears on a later power-up
       only if the battery still cannot hold the clock.  Note that
       replacing the battery itself cuts the RTC's power, so the warning
-      shows once on the first power-up after a battery change.
+      shows once on the first power-up after a battery change.  The check
+      assumes a DS3231; for a DS1307 (where that register is just RAM),
+      set RTCIsDS3231 to 0 below to disable it.
 
     - Reliability: watchdog timer, hourly (not per-minute) RTC writes,
       and no heap allocation in the GPS parsing path.
