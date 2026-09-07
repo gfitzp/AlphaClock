@@ -2091,10 +2091,12 @@ void ForceRender(void)
 
   if (RedrawNow)
   {
+    RedrawNow = 0;
     UpdateDisplay(1);
   }
 
-  RedrawNow = 0;    // Rendered: no pending redraw request remains
+  // Leave RedrawNow as the last render set it: if that render queued a new
+  // text word, the main redraw path must still draw it this pass.
 }
 
 void advanceBrightnessTransition(void)
