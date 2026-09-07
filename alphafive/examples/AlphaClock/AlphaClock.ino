@@ -53,13 +53,14 @@
       every 10 minutes until the configuration menu is entered (hold +
       and - for two seconds; an ordinary snooze or brightness press does
       not dismiss it), and keeps the unset-time blink until a trusted
-      time source (GPS, serial sync, or the buttons) sets the clock.  Setting the RTC from a trusted time
-      also clears the flag, so the warning reappears on a later power-up
-      only if the battery still cannot hold the clock.  Note that
-      replacing the battery itself cuts the RTC's power, so the warning
-      shows once on the first power-up after a battery change.  The check
-      assumes a DS3231; for a DS1307 (where that register is just RAM),
-      set RTCIsDS3231 to 0 below to disable it.
+      time source (GPS, serial sync, or the buttons) sets the clock.
+      Setting the RTC from a trusted time also clears the flag, so the
+      warning reappears on a later power-up only if the battery still
+      cannot hold the clock.  Note that replacing the battery itself cuts
+      the RTC's power, so the warning shows once on the first power-up
+      after a battery change; enter the configuration menu to dismiss it.
+      The check assumes a DS3231; for a DS1307 (where that register is
+      just RAM), set RTCIsDS3231 to 0 below to disable it.
 
     - Reliability: watchdog timer, hourly (not per-minute) RTC writes,
       and no heap allocation in the GPS parsing path.
