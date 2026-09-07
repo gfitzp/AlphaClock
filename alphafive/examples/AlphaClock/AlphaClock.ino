@@ -45,6 +45,13 @@
 
     - Selecting an alarm tone in the menu plays a short preview of it.
 
+    - RTC battery check: at startup, the DS3231's Oscillator Stop Flag is
+      read.  If set, the backup battery failed to keep the RTC running while
+      the clock was unplugged: the display shows "RTC BATT DEAD" instead of
+      the greeting, and repeats it every 10 minutes until any button is
+      pressed.  The flag is cleared whenever the RTC is set from a trusted
+      time (GPS, serial sync, or the buttons).
+
     - Reliability: watchdog timer, hourly (not per-minute) RTC writes,
       and no heap allocation in the GPS parsing path.
 
@@ -261,6 +268,7 @@ int8_t numberCharSet;
 
 // Other global variables:
 byte UseRTC;
+byte RTCBatteryFailed = 0;  // Set at startup if the RTC's Oscillator Stop Flag shows its backup battery failed
 unsigned long NextClockUpdate, NextAlarmCheck;
 unsigned long milliTemp;
 unsigned int FLWoffset; // Counter variable for FLW (Five Letter Word) display mode
@@ -413,6 +421,8 @@ void checkButtons(void)
         EndVCRmode();    // Turn off VCR-blink mode, if it was still on.
       }
 
+      RTCBatteryFailed = 0;   // Any button press acknowledges the RTC battery warning
+
       // Check to see if any of the buttons has JUST been depressed:
 
       if ((buttonMonitor & a5_alarmSetBtn) && ((buttonStateLast & a5_alarmSetBtn) == 0))
@@ -553,7 +563,7 @@ void checkButtons(void)
 
           if (UseRTC)
           {
-            RTC.set(now());
+            RTCSetTime();
           }
         }
         else if (milliTemp >= (Btn3_Plus_StartTime + 400))
@@ -563,7 +573,7 @@ void checkButtons(void)
 
           if (UseRTC)
           {
-            RTC.set(now());
+            RTCSetTime();
           }
         }
 
@@ -577,7 +587,7 @@ void checkButtons(void)
 
           if (UseRTC)
           {
-            RTC.set(now());
+            RTCSetTime();
           }
         }
         else if (milliTemp > (Btn4_Minus_StartTime + 400))
@@ -588,7 +598,7 @@ void checkButtons(void)
           //          TimeChanged = 1;
           if (UseRTC)
           {
-            RTC.set(now());
+            RTCSetTime();
           }
         }
 
@@ -722,7 +732,7 @@ void checkButtons(void)
           {
             if (UseRTC)
             {
-              RTC.set(now());
+              RTCSetTime();
             }
           }
         }
@@ -1494,6 +1504,26 @@ void DisplayWordSequence(byte sequence)
 
       break;
 
+    case 18:    // Display " RTC " "BATT " "DEAD " -- the RTC's backup battery failed
+      if (wordSequenceStep < 3)
+      {
+        DisplayWord(" RTC ", 800);
+      }
+      else if (wordSequenceStep < 5)
+      {
+        DisplayWord("BATT ", 800);
+      }
+      else if (wordSequenceStep < 7)
+      {
+        DisplayWord("DEAD ", 800);
+      }
+      else
+      {
+        wordSequence = 0;
+      }
+
+      break;
+
     default:
       // Turn off word sequences. (Catches case 0.)
       wordSequence = 0;
@@ -1528,6 +1558,12 @@ void DisplayWordDP(char WordIn[])
 
 void SpecialOccasionMessage()
 {
+  // Repeat the RTC battery warning every 10 minutes until a button press acknowledges it
+  if (RTCBatteryFailed && (minute() % 10 == 0) && (second() == 30))
+  {
+    DisplayWordSequence(18);
+  }
+
   // Only show the message a few times per hour, and only in the morning
   if (second() % 20 == 0 && hour() < 12)
   {
@@ -1559,6 +1595,65 @@ void  EndVCRmode()
     RedrawNow_NoFade = 1;
     VCRmode = 0;
     randomSeed(now());  // Either a button press or RTC time
+  }
+}
+
+#define DS3231Address 104           // I2C address of the DS3231 (ChronoDot) RTC
+#define DS3231StatusRegister 0x0F
+
+byte RTCReadStatus(byte *status)
+{
+  // Read the DS3231 status register.  Returns 1 on success.
+  Wire.beginTransmission(DS3231Address);
+  Wire.write(DS3231StatusRegister);
+
+  if (Wire.endTransmission() != 0)
+  {
+    return 0;
+  }
+
+  Wire.requestFrom(DS3231Address, 1);
+
+  if (Wire.available() == 0)
+  {
+    return 0;
+  }
+
+  *status = Wire.read();
+  return 1;
+}
+
+byte RTCOscillatorStopped(void)
+{
+  // The DS3231's Oscillator Stop Flag (status register bit 7) latches when
+  // the oscillator has stopped, which in normal use means the chip lost both
+  // main and backup power.  Found set at startup, it means the backup battery
+  // is dead or missing and the RTC's time cannot be trusted.  There is no way
+  // to read the battery voltage itself; this flag is the chip's only signal.
+  byte status;
+
+  if (RTCReadStatus(&status) == 0)
+  {
+    return 0;
+  }
+
+  return (status & 0x80) ? 1 : 0;
+}
+
+void RTCSetTime(void)
+{
+  // Write the system time to the RTC, and clear the Oscillator Stop Flag now
+  // that the RTC holds a trustworthy time.  Use this everywhere the RTC is set.
+  RTC.set(now());
+
+  byte status;
+
+  if (RTCReadStatus(&status) && (status & 0x80))
+  {
+    Wire.beginTransmission(DS3231Address);
+    Wire.write(DS3231StatusRegister);
+    Wire.write(status & 0x7F);
+    Wire.endTransmission();
   }
 }
 
@@ -2007,6 +2102,13 @@ void setup()
 
   if (UseRTC)
   {
+    if (RTCOscillatorStopped())
+    {
+      RTCBatteryFailed = 1;
+      Serial.println("RTC oscillator stopped since it was last set: the backup battery is dead or missing.");
+      Serial.println("The RTC's time cannot be trusted until it is set again (e.g., by GPS).");
+    }
+
     setSyncProvider(RTC.get);   // Function to get the time from the RTC (e.g., Chronodot)
 
     if (timeStatus() != timeSet)
@@ -2017,7 +2119,11 @@ void setup()
     else
     {
       Serial.println("System time: Set by RTC.  Rock on!");
-      EndVCRmode();
+
+      if (RTCBatteryFailed == 0)
+      {
+        EndVCRmode();   // Keep blinking if the RTC's time is untrustworthy
+      }
     }
   }
   else
@@ -2055,7 +2161,14 @@ void setup()
   RedrawNow = 1;
   RedrawNow_NoFade = 0;
   UpdateBrightness = 0;
-  DisplayWordSequence(10);  // Say hello!
+  if (RTCBatteryFailed)
+  {
+    DisplayWordSequence(18);  // Warn: RTC battery needs replacing
+  }
+  else
+  {
+    DisplayWordSequence(10);  // Say hello!
+  }
   buttonMonitor = a5GetButtons();
 
   if ((buttonMonitor & a5_alarmSetBtn) && (buttonMonitor & a5_timeSetBtn))
@@ -2238,7 +2351,7 @@ void loop()
           {
             last_rtc_update = millis();
             rtcSyncedFromGPS = 1;
-            RTC.set(now());
+            RTCSetTime();
             Serial.print(" and the real-time clock");
           }
 
@@ -2535,7 +2648,7 @@ void processSerialMessage()
 
           if (UseRTC)
           {
-            RTC.set(now());
+            RTCSetTime();
           }
 
           EndVCRmode();
@@ -3180,7 +3293,7 @@ void UpdateDisplay(byte forceUpdate)
 
         if (UseRTC)
         {
-          RTC.set(now());
+          RTCSetTime();
         }
 
         optionValue = 0;
@@ -3322,7 +3435,7 @@ void AdjDayMonthYear(int8_t AdjDay, int8_t AdjMonth, int8_t AdjYear)
 
   if (UseRTC)
   {
-    RTC.set(now());
+    RTCSetTime();
   }
 }
 
@@ -3997,7 +4110,7 @@ void EESaveSettings(void)
 
     if (UseRTC)
     {
-      RTC.set(now());    // Update time at RTC, in case time was changed in settings menu
+      RTCSetTime();    // Update time at RTC, in case time was changed in settings menu
     }
   }
 }

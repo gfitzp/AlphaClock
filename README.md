@@ -70,6 +70,22 @@ is temporary: it lasts until the next phase begins, and it does not alter the
 daytime setting. To change how bright the clock is during the day, adjust it
 during the day.
 
+## RTC backup battery
+
+Neither the DS3231 nor the DS1307 can report its backup-battery voltage. What the
+DS3231 does provide is an **Oscillator Stop Flag**, which latches whenever the
+chip has lost all power — i.e., the coin cell could not keep it running while
+the clock was unplugged. The firmware reads the flag at startup; if it is set,
+the display shows **RTC BATT DEAD** in place of the greeting and repeats the
+warning every 10 minutes until any button is pressed. The clock keeps blinking
+(unset-time mode) until GPS provides a trustworthy time. The flag is cleared
+whenever the RTC is written with a trusted time, so the warning will reappear
+on the next power-up only if the battery is still unable to hold the clock.
+
+Note that replacing the battery itself cuts the RTC's power, so the warning
+will show once on the first power-up after a battery change — press any button
+to dismiss it.
+
 ## EEPROM map
 
 | Address | Contents |
