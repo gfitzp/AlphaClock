@@ -43,9 +43,12 @@
       night or during a ramp they adjust the display temporarily, until
       the next phase begins, without changing the daytime setting.
 
-      Every brightness change fades smoothly, including across the
-      display's three drive-mode boundaries (between manual levels 5/6
-      and 7/8), where the original firmware blinked to black.
+      Every brightness change fades rather than blinking, including
+      across the display's drive-mode boundaries (between manual levels
+      5/6 and 7/8), where the original firmware blanked the display
+      before fading back in.  The 5/6 crossing is seamless; the 7/8
+      crossing keeps a small inherent step, because the brightest drive
+      mode cannot go dim enough to match the top of the one below it.
 
     - Selecting an alarm tone in the menu plays a short preview of it.
 
@@ -2074,6 +2077,26 @@ void applySunSchedule(void)
   lastScheduleTarget = target;
 }
 
+void ForceRender(void)
+{
+  // Render the current display content into the off-screen buffer, guaranteed.
+  // A forced UpdateDisplay() that happens to land just as a timed text word
+  // expires ends the word and queues whatever comes next (setting RedrawNow)
+  // without drawing anything; when that happens, render once more so the
+  // buffer holds real content.  The second call is always safe: option
+  // values were consumed by the first call, and per-second counters key off
+  // the unchanged current second.
+  RedrawNow = 0;
+  UpdateDisplay(1);
+
+  if (RedrawNow)
+  {
+    UpdateDisplay(1);
+  }
+
+  RedrawNow = 0;    // Rendered: no pending redraw request remains
+}
+
 void advanceBrightnessTransition(void)
 {
   // Move the display from its current drive mode/level to the target, one
@@ -2093,7 +2116,7 @@ void advanceBrightnessTransition(void)
   {
     brightTransitionActive = 0;
     a5_brightLevel = transitionTargetLevel;
-    UpdateDisplay(1);   // Normal fade to the final level
+    ForceRender();      // Normal fade to the final level
     return;
   }
 
@@ -2104,12 +2127,12 @@ void advanceBrightnessTransition(void)
     if (a5_brightLevel < 19)
     {
       a5_brightLevel = 19;
-      UpdateDisplay(1);
+      ForceRender();
       return;
     }
 
     a5_brightLevel = ModeCrossingLevel[a5_brightMode];
-    UpdateDisplay(1);
+    ForceRender();
     a5_FadeStage = -1;
     a5loadVidBuf_fromOSB();   // Load the image at the matching level first (a brief dim at worst)...
     a5_brightMode++;          // ...then switch modes: same light output, no visible change
@@ -2123,13 +2146,13 @@ void advanceBrightnessTransition(void)
     if (a5_brightLevel > crossing)
     {
       a5_brightLevel = crossing;
-      UpdateDisplay(1);
+      ForceRender();
       return;
     }
 
     a5_brightMode--;          // Switch modes first (a brief dim at worst, never a flash)...
     a5_brightLevel = 19;
-    UpdateDisplay(1);
+    ForceRender();
     a5_FadeStage = -1;
     a5loadVidBuf_fromOSB();   // ...then load the image at the matching level
   }
