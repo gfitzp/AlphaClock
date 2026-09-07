@@ -177,7 +177,8 @@ int16_t storedLat100, storedLon100;   // Latitude and longitude, in degrees * 10
 int sunriseMinutes = -1;
 int sunsetMinutes = -1;
 int astroDawnMinutes = -1;      // Astronomical dawn: sun 18 degrees below horizon
-byte lastSunCalcDay = 0;
+unsigned long lastSunCalcDayNumber = 0;   // elapsedDays() of the last recompute
+byte lastSunCalcDST = 0;                  // DST in effect at the last recompute
 
 // Brightness-ramp state:
 byte lastScheduleMinute = 61;   // Evaluate the schedule only when the minute changes
@@ -258,7 +259,8 @@ byte AlarmTimeChanged, TimeChanged;
 byte holdDebounce;
 
 // Brightness steps for manual brightness adjustment
-byte Brightness;
+byte Brightness;      // Live display brightness (driven by the sunrise/sunset schedule)
+byte DayBrightness;   // The user's daytime brightness setting; the only one saved to EEPROM
 #define BrightnessMax 11
 byte MBlevel[] =
 {
@@ -718,6 +720,11 @@ void checkButtons(void)
               Brightness++;
               UpdateBrightness = 1;
               UpdateEE = 1;
+
+              if (schedulePhaseLast == 0)   // During the day, this sets the saved daytime brightness;
+              {                             // at night or during a ramp it only adjusts the live display.
+                DayBrightness = Brightness;
+              }
             }
         }
       }
@@ -744,6 +751,11 @@ void checkButtons(void)
               Brightness--;
               UpdateBrightness = 1;
               UpdateEE = 1;
+
+              if (schedulePhaseLast == 0)
+              {
+                DayBrightness = Brightness;
+              }
             }
         }
       }
@@ -1652,7 +1664,9 @@ int sunEventMinutes(byte rise, int yr, byte mo, byte dy, float lat, float lon, i
 
 void recomputeSunTimes(void)
 {
-  lastSunCalcDay = day();
+  time_t tLocal = now();
+  lastSunCalcDayNumber = elapsedDays(tLocal);
+  lastSunCalcDST = timezones[tzIndex]->locIsDST(tLocal);
 
   if (locationValid == 0)
   {
@@ -1664,7 +1678,6 @@ void recomputeSunTimes(void)
 
   float lat = storedLat100 / 100.0;
   float lon = storedLon100 / 100.0;
-  time_t tLocal = now();
 
   // Current UTC offset (including DST), in minutes, from the active time zone.
   // time_t is unsigned, so the difference must be cast to a signed type before
@@ -1780,29 +1793,6 @@ void updateLocationFromGPS(void)
   Serial.println(tzNames[tzIndex]);
 }
 
-byte EEStoredBrightness(void)
-{
-  // Read only the saved Brightness value, with the same sanity checks as
-  // EEReadSettings() -- but never return 0 (a fully dark display).
-  byte value = EEPROM.read(0);
-
-  if ((value > 100 + BrightnessMax) || (value < 100))
-  {
-    value = a5brightLevelDefault;
-  }
-  else
-  {
-    value = value - 100;
-  }
-
-  if (value == 0)
-  {
-    value = 1;
-  }
-
-  return value;
-}
-
 void applySunSchedule(void)
 {
   // Brightness ramp scheduler.  Four phases per day:
@@ -1821,9 +1811,13 @@ void applySunSchedule(void)
 
   lastScheduleMinute = minute();
 
-  if (day() != lastSunCalcDay)
+  // Recompute the sun times once per day, whenever the date jumps (e.g., GPS
+  // first setting the clock), and when DST switches during the day.
+  time_t tNow = now();
+
+  if ((elapsedDays(tNow) != lastSunCalcDayNumber) || (timezones[tzIndex]->locIsDST(tNow) != lastSunCalcDST))
   {
-    recomputeSunTimes();    // Recompute once per day (also after GPS first sets the date)
+    recomputeSunTimes();
   }
 
   // Evening ramp window: sunset to bedtime
@@ -1856,7 +1850,12 @@ void applySunSchedule(void)
   }
 
   int nowMin = hour() * 60 + minute();
-  int8_t dayBright = EEStoredBrightness();    // Daytime brightness = last saved setting
+  int8_t dayBright = DayBrightness;
+
+  if (dayBright < 1)
+  {
+    dayBright = 1;    // Never ramp toward a fully dark display
+  }
   int8_t target;
   byte phase;
 
@@ -1967,6 +1966,9 @@ void setup()
     Brightness = 1;    // If display is fully dark at reset, turn it up to minimum brightness.
   }
 
+  // Bound every I2C transaction: a bus glitch becomes a 25 ms error instead
+  // of a hang (and the watchdog reset that would follow).
+  Wire.setWireTimeout(25000, true);
   UseRTC = a5CheckForRTC();
 
   if (UseRTC)
@@ -2026,6 +2028,7 @@ void setup()
   {
     // If Alarm button and Time button (LED Test buttons) held down at turn on, reset to defaults.
     Brightness = a5brightLevelDefault;
+    DayBrightness = a5brightLevelDefault;
     HourMode24 = a5HourMode24Default;
     AlarmEnabled = a5AlarmEnabledDefault;
     AlarmTimeHr = a5AlarmHrDefault;
@@ -2085,14 +2088,11 @@ void loop()
         Serial.print(GPS.lastNMEA()); // this also sets the newNMEAreceived() flag to false
       }
 
-      if (!GPS.parse(GPS.lastNMEA())) // this also sets the newNMEAreceived() flag to false
-      {
-        return;    // we can fail to parse a sentence in which case we should just wait for another
-      }
-
+      // Parse the sentence (this also clears the newNMEAreceived() flag). A sentence that
+      // fails to parse is simply skipped; the rest of the loop still runs.
       // Only update the time if we have a fix and we're getting RMC sentences, since those have both time and date values.
       // (strstr rather than String: no heap allocation, and matches both $GPRMC and the $GNRMC sent by multi-constellation modules.)
-      if (GPS.fix && (strstr(GPS.lastNMEA(), "RMC") != NULL))
+      if (GPS.parse(GPS.lastNMEA()) && GPS.fix && (strstr(GPS.lastNMEA(), "RMC") != NULL))
       {
         // Convert the GPS time into Unix epoch time
         utc_time = makeTime({GPS.seconds, GPS.minute, GPS.hour, 0, GPS.day, GPS.month, CalendarYrToTm(2000 + GPS.year)}); // '0' because makeTime() needs a weekday
@@ -2456,7 +2456,9 @@ void SerialSendDataDaisyChain(char DataIn[])
   *toPtr++ = *fromPtr++;
   *toPtr++ = *fromPtr++;
   *toPtr = *fromPtr;
-  Serial1.write(outputBuffer);
+  // Explicit length: the buffer is binary data, not a NUL-terminated string.
+  // Note that Serial1 is shared with the GPS module in this build.
+  Serial1.write((uint8_t*)outputBuffer, 13);
 }
 
 void processSerialMessage()
@@ -2537,6 +2539,11 @@ void processSerialMessage()
               c = Serial.read();  // Read input buffer, char 3 of 10
               Brightness = (10 * (c2 - '0') + (c - '0'));
               UpdateBrightness = 1;
+
+              if (schedulePhaseLast == 0)
+              {
+                DayBrightness = Brightness;
+              }
             }
 
             if (c == '1')
@@ -3250,14 +3257,21 @@ void AdjDayMonthYear(int8_t AdjDay, int8_t AdjMonth, int8_t AdjYear)
     moTemp = 1;
   }
 
+  byte daysInMonth = monthDays[moTemp - 1];
+
+  if ((moTemp == 2) && (((yrTemp % 4 == 0) && (yrTemp % 100 != 0)) || (yrTemp % 400 == 0)))
+  {
+    daysInMonth = 29;   // Leap year
+  }
+
   int dayTemp = day(timeTemp) + AdjDay;  // avoid changing month, unless requested
 
   if (dayTemp < 1)
   {
-    dayTemp = monthDays[moTemp - 1];
+    dayTemp = daysInMonth;
   }
 
-  if (dayTemp > monthDays[moTemp - 1])
+  if (dayTemp > daysInMonth)
     if (AdjDay > 0)
     {
       // Roll over day-of-month to 1, if explicitly requesting increase in date.
@@ -3266,7 +3280,7 @@ void AdjDayMonthYear(int8_t AdjDay, int8_t AdjMonth, int8_t AdjYear)
     else
     {
       // Otherwise, we should "truncate" the date to last day of month.
-      dayTemp = monthDays[moTemp - 1];
+      dayTemp = daysInMonth;
     }
 
   setTime(hour(timeTemp), minute(timeTemp), second(timeTemp),
@@ -3697,6 +3711,7 @@ void ApplyDefaults(void)
 {
   // VARIABLES THAT HAVE EEPROM STORAGE AND DEFAULTS...
   a5_brightLevel =  a5brightLevelDefault;
+  DayBrightness =   a5brightLevelDefault;
   HourMode24 =      a5HourMode24Default;
   AlarmEnabled =    a5AlarmEnabledDefault;
   AlarmTimeHr =     a5AlarmHrDefault;
@@ -3716,12 +3731,14 @@ void EEReadSettings(void)
 
   if ((value > 100 + BrightnessMax) || (value < 100))
   {
-    Brightness = a5brightLevelDefault;
+    DayBrightness = a5brightLevelDefault;
   }
   else
   {
-    Brightness = value - 100;
+    DayBrightness = value - 100;
   }
+
+  Brightness = DayBrightness;
 
   value = EEPROM.read(1);
 
@@ -3850,9 +3867,10 @@ void EESaveSettings(void)
     // Also, no error checking is provided at this, the write EEPROM stage.
     value = EEPROM.read(0);
 
-    if (Brightness != (value - 100))
+    // Save the daytime setting, never the live (possibly night-dimmed) brightness
+    if (DayBrightness != (value - 100))
     {
-      a5writeEEPROM(0, Brightness + 100);
+      a5writeEEPROM(0, DayBrightness + 100);
       // NOTE:  Do not blink LEDs off to indicate saving of this value
     }
 
