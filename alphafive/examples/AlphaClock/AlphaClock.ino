@@ -50,9 +50,10 @@
       lost all power, i.e. the coin cell could not keep it running while
       the clock was unplugged.  The flag is read at startup.  If set, the
       display shows "RTC BATT DEAD" instead of the greeting, repeats it
-      every 10 minutes until any button is pressed, and keeps the
-      unset-time blink until a trusted time source (GPS, serial sync, or
-      the buttons) sets the clock.  Setting the RTC from a trusted time
+      every 10 minutes until the configuration menu is entered (hold +
+      and - for two seconds; an ordinary snooze or brightness press does
+      not dismiss it), and keeps the unset-time blink until a trusted
+      time source (GPS, serial sync, or the buttons) sets the clock.  Setting the RTC from a trusted time
       also clears the flag, so the warning reappears on a later power-up
       only if the battery still cannot hold the clock.  Note that
       replacing the battery itself cuts the RTC's power, so the warning
@@ -434,8 +435,6 @@ void checkButtons(void)
       {
         EndVCRmode();    // Turn off VCR-blink mode, if it was still on.
       }
-
-      RTCBatteryFailed = 0;   // Any button press acknowledges the RTC battery warning
 
       // Check to see if any of the buttons has JUST been depressed:
 
@@ -836,6 +835,8 @@ void checkButtons(void)
         {
           modeShowMenu = 1;  // Enter configuration menu
           menuItem = 0;
+          RTCBatteryFailed = 0;   // Entering the menu is the deliberate act that acknowledges
+                                  // the RTC battery warning (a snooze press shouldn't dismiss it)
           DisplayWord("     ", 500);
         }
       }
@@ -1570,7 +1571,7 @@ void DisplayWordDP(char WordIn[])
 
 void SpecialOccasionMessage()
 {
-  // Repeat the RTC battery warning every 10 minutes until a button press acknowledges it
+  // Repeat the RTC battery warning every 10 minutes until the config menu is entered (which acknowledges it)
   if (RTCBatteryFailed && (minute() % 10 == 0) && (second() == 30))
   {
     DisplayWordSequence(18);
@@ -4132,9 +4133,9 @@ void EESaveSettings(void)
 
     UpdateEE = 0;
 
-    if (UseRTC)
-    {
-      RTCSetTime();    // Update time at RTC, in case time was changed in settings menu
-    }
+    // Note: the RTC is not written here.  Every path that changes the time
+    // (buttons, the date/seconds menus, serial sync, GPS) already calls
+    // RTCSetTime() itself, and writing it from an ordinary settings save
+    // could clear the Oscillator Stop Flag with an untrusted time.
   }
 }

@@ -77,14 +77,16 @@ DS3231 does provide is an **Oscillator Stop Flag**, which latches whenever the
 chip has lost all power — i.e., the coin cell could not keep it running while
 the clock was unplugged. The firmware reads the flag at startup; if it is set,
 the display shows **RTC BATT DEAD** in place of the greeting and repeats the
-warning every 10 minutes until any button is pressed. The clock keeps blinking
+warning every 10 minutes until you enter the configuration menu (hold **+** and
+**−** for two seconds) — an ordinary snooze or brightness press won't dismiss it
+unnoticed. The clock keeps blinking
 (unset-time mode) until GPS provides a trustworthy time. The flag is cleared
 whenever the RTC is written with a trusted time, so the warning will reappear
 on the next power-up only if the battery is still unable to hold the clock.
 
 Note that replacing the battery itself cuts the RTC's power, so the warning
-will show once on the first power-up after a battery change — press any button
-to dismiss it.
+will show once on the first power-up after a battery change — enter the
+configuration menu to dismiss it.
 
 The check assumes a DS3231. If the RTC is a DS1307 (where that register is just
 battery-backed RAM), set `RTCIsDS3231` to 0 near the top of the sketch to
