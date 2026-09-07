@@ -29,10 +29,16 @@
       a minute, and the US time zone (with DST rules) is selected
       automatically from the GPS location.  The location and time zone are
       cached in EEPROM (addresses 10-15) so both work from power-up.
-      The automatic selection uses approximate boundaries, so near a zone
-      line it can be wrong; the "TIME ZONE" menu item (EEPROM address 17)
-      can pin any US zone, or UTC, instead of AUTO.  A change takes effect
-      immediately.
+      The automatic selection uses approximate boundaries (longitude
+      bands plus a box for Arizona), so near a zone line -- the Florida
+      panhandle, parts of Indiana, far west Texas, the Idaho panhandle,
+      the Navajo Nation -- it can pick the wrong zone.  The "TIME ZONE"
+      menu item, right after GPS, overrides it: AUTO, EASTN, CENTL,
+      MOUNT, ARIZN (no DST), PACIF, ALASK, HAWAI (no DST), or UTC.  A
+      pinned zone takes effect immediately (no wait for the next GPS
+      sync), is saved to EEPROM (address 17), and is used for the
+      sunrise/sunset schedule as well.  AUTO restores location-based
+      selection.
 
     - Brightness schedule: brightness steps down from sunset to bedtime,
       stays at minimum overnight, and steps back up from astronomical dawn
