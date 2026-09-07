@@ -46,6 +46,16 @@ Install the external libraries into your Arduino libraries folder
 (`~/Documents/Arduino/libraries` on macOS). The `alphafive` library must also be
 present there for the IDE to find it; keep that copy in sync with this repo.
 
+## Configuration menu
+
+Hold **+** and **−** together for two seconds to enter (and to leave) the
+configuration menu. The time-set button moves to the next item, the alarm-set
+button to the previous one, and **+**/**−** change the current item's value.
+Holding **+** or **−** repeats the step: after about 0.6 seconds it advances four
+steps per second, which makes long cycles like `BED TIME`, `TIME ZONE`, and the
+date and seconds settings quick to reach. The on/off items (`AM/PM`/`24 HR`,
+`TEST SOUND`, `GPS`) don't repeat.
+
 ## Time zone
 
 With GPS on, the US time zone (including its DST rules) is chosen automatically

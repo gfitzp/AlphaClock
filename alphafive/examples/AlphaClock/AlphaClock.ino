@@ -67,6 +67,11 @@
 
     - Selecting an alarm tone in the menu plays a short preview of it.
 
+    - Configuration menu: holding + or - repeats the step (after about
+      0.6 s, four steps per second) on items with a range of values, such
+      as BED TIME, TIME ZONE and the date/seconds settings.  The on/off
+      items (AM/PM, TEST SOUND, GPS) do not repeat.
+
     - Personalized messages: "HELLO <USERNAME>" at startup, and a happy
       birthday / holiday greeting every 20 seconds throughout the morning
       on the relevant date (USERNAME, BIRTHDAY_MONTH and BIRTHDAY_DAY are
@@ -343,6 +348,10 @@ byte RedrawNow, RedrawNow_NoFade;
 // Button Management:
 #define ButtonCheckInterval 20    // Time delay between responding to button state, ms
 #define HoldDownTime 2000         // How long to hold buttons to access menus requiring holding two buttons
+#define MenuRepeatDelay 600       // In the config menu: hold + or - this long before it starts repeating, ms
+#define MenuRepeatInterval 250    // ...and then step the value this often, ms
+byte menuRepeatFired;             // A held button has already stepped the value; skip the step on release
+unsigned long menuNextRepeat;
 byte buttonStateLast;
 byte buttonMonitor;
 unsigned long Btn1_AlrmSet_StartTime, Btn2_TimeSet_StartTime, Btn3_Plus_StartTime, Btn4_Minus_StartTime;
@@ -543,11 +552,15 @@ void checkButtons(void)
       if ((buttonMonitor & a5_plusBtn) && ((buttonStateLast & a5_plusBtn) == 0))
       {
         Btn3_Plus_StartTime = milliTemp;
+        menuRepeatFired = 0;
+        menuNextRepeat = 0;
       }
 
       if ((buttonMonitor & a5_minusBtn) && ((buttonStateLast & a5_minusBtn) == 0))
       {
         Btn4_Minus_StartTime = milliTemp;
+        menuRepeatFired = 0;
+        menuNextRepeat = 0;
       }
     }
     else if ((buttonStateLast == 0) && (buttonMonitor == 0))
@@ -604,20 +617,59 @@ void checkButtons(void)
         }
       }
 
+      // Hold-to-repeat: after an initial delay, a held + or - keeps stepping the
+      // value (on items with a range of values, not on/off toggles).  Not while
+      // both are down: that is the hold that leaves the menu.
+      if (menuItemRepeats())
+      {
+        if ((buttonMonitor & a5_plusBtn) && ((buttonMonitor & a5_minusBtn) == 0)
+            && (milliTemp >= (Btn3_Plus_StartTime + MenuRepeatDelay)) && (milliTemp >= menuNextRepeat))
+        {
+          optionValue = 1;
+          UpdateEE = 1;
+          RedrawNow = 1;
+          menuRepeatFired = 1;
+          menuNextRepeat = milliTemp + MenuRepeatInterval;
+        }
+        else if ((buttonMonitor & a5_minusBtn) && ((buttonMonitor & a5_plusBtn) == 0)
+                 && (milliTemp >= (Btn4_Minus_StartTime + MenuRepeatDelay)) && (milliTemp >= menuNextRepeat))
+        {
+          optionValue = -1;
+          UpdateEE = 1;
+          RedrawNow = 1;
+          menuRepeatFired = 1;
+          menuNextRepeat = milliTemp + MenuRepeatInterval;
+        }
+      }
+
       if (((buttonMonitor & a5_plusBtn) == 0) && (buttonStateLast & a5_plusBtn))
       {
         // The "+" button has just been released.
-        optionValue = 1;
-        UpdateEE = 1;
-        RedrawNow = 1;
+        if (menuRepeatFired)
+        {
+          menuRepeatFired = 0;    // The held button already stepped the value; don't step again on release
+        }
+        else
+        {
+          optionValue = 1;
+          UpdateEE = 1;
+          RedrawNow = 1;
+        }
       }
 
       if (((buttonMonitor & a5_minusBtn) == 0) && (buttonStateLast & a5_minusBtn))
       {
         // The "-" Button has just been released.
-        optionValue = -1;
-        UpdateEE = 1;
-        RedrawNow = 1;
+        if (menuRepeatFired)
+        {
+          menuRepeatFired = 0;
+        }
+        else
+        {
+          optionValue = -1;
+          UpdateEE = 1;
+          RedrawNow = 1;
+        }
       }
     }
     else
@@ -905,6 +957,13 @@ void checkButtons(void)
     buttonStateLast = buttonMonitor;
     buttonMonitor = 0;
   }
+}
+
+byte menuItemRepeats(void)
+{
+  // Menu items that step through a range of values support hold-to-repeat;
+  // the on/off toggles do not.
+  return ((menuItem != AMPM24HRMenuItem) && (menuItem != SoundTestMenuItem) && (menuItem != GPSModeMenuItem));
 }
 
 void DisplayMenuOptionName(void)
