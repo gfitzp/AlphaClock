@@ -43,6 +43,10 @@
       night or during a ramp they adjust the display temporarily, until
       the next phase begins, without changing the daytime setting.
 
+      Every brightness change fades smoothly, including across the
+      display's three drive-mode boundaries (between manual levels 5/6
+      and 7/8), where the original firmware blinked to black.
+
     - Selecting an alarm tone in the menu plays a short preview of it.
 
     - RTC battery check: the DS3231 cannot report its backup-battery
@@ -324,6 +328,17 @@ byte MBmode[]  =
 {
   0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 2, 2
 };
+
+// Smooth crossing of the hardware drive-mode boundaries (see advanceBrightnessTransition):
+byte brightTransitionActive = 0;
+int8_t transitionTargetLevel;
+byte transitionTargetMode;
+
+// The library level in mode N+1 whose light output matches level 19 (the top) of mode N,
+// indexed by N.  Mode 0 -> 1: the modes differ by exactly 57/15 intensity slots, so
+// BLUT 15 / 3.8 = BLUT 4 = level 10.  Mode 1 -> 2: the library's drive timing is tuned
+// so that BLUT 15 in mode 1 sits just under BLUT 1 in mode 2, i.e. level 1.
+const byte ModeCrossingLevel[] = {10, 1};
 // Brightness schedule (all values in minutes past local midnight):
 // In the evening, brightness ramps down step by step, starting at sunset and
 // reaching minimum brightness at bedtime.  In the morning it ramps back up,
@@ -2052,6 +2067,67 @@ void applySunSchedule(void)
   lastScheduleTarget = target;
 }
 
+void advanceBrightnessTransition(void)
+{
+  // Move the display from its current drive mode/level to the target, one
+  // fade at a time, so that crossing a mode boundary is invisible instead of
+  // the blink-to-black the original firmware used.  The refresh interrupt
+  // reads the mode directly, so the mode itself can't be faded; instead we
+  // fade to the level whose light output matches a level in the next mode
+  // (ModeCrossingLevel), switch modes at that point, and keep fading.
+  // Called every pass through loop() while a transition is active.
+
+  if (a5_FadeStage >= 0)
+  {
+    return;   // Wait for the fade in progress to finish
+  }
+
+  if (a5_brightMode == transitionTargetMode)
+  {
+    brightTransitionActive = 0;
+    a5_brightLevel = transitionTargetLevel;
+    UpdateDisplay(1);   // Normal fade to the final level
+    return;
+  }
+
+  if (transitionTargetMode > a5_brightMode)
+  {
+    // Going brighter: fade to the top of this mode, then switch up at the
+    // level of the next mode that matches it.
+    if (a5_brightLevel < 19)
+    {
+      a5_brightLevel = 19;
+      UpdateDisplay(1);
+      return;
+    }
+
+    a5_brightLevel = ModeCrossingLevel[a5_brightMode];
+    UpdateDisplay(1);
+    a5_FadeStage = -1;
+    a5loadVidBuf_fromOSB();   // Load the image at the matching level first (a brief dim at worst)...
+    a5_brightMode++;          // ...then switch modes: same light output, no visible change
+  }
+  else
+  {
+    // Going dimmer: fade down to the crossing level, then switch down to
+    // the top of the next mode.
+    byte crossing = ModeCrossingLevel[a5_brightMode - 1];
+
+    if (a5_brightLevel > crossing)
+    {
+      a5_brightLevel = crossing;
+      UpdateDisplay(1);
+      return;
+    }
+
+    a5_brightMode--;          // Switch modes first (a brief dim at worst, never a flash)...
+    a5_brightLevel = 19;
+    UpdateDisplay(1);
+    a5_FadeStage = -1;
+    a5loadVidBuf_fromOSB();   // ...then load the image at the matching level
+  }
+}
+
 void setup()
 {
   MCUSR = 0;        // Clear the reset-cause flags so a watchdog reset
@@ -2484,21 +2560,24 @@ void loop()
   if (UpdateBrightness)
   {
     UpdateBrightness = 0;  // Reset the flag that triggered this clause.
+    transitionTargetLevel = MBlevel[Brightness];
+    transitionTargetMode = MBmode[Brightness];
 
-    if (a5_brightMode == MBmode[Brightness])
+    if (a5_brightMode == transitionTargetMode)
     {
-      a5_brightLevel = MBlevel[Brightness];
+      brightTransitionActive = 0;
+      a5_brightLevel = transitionTargetLevel;
       UpdateDisplay(1);  // Force update of display data, with new brightness level
     }
     else
     {
-      a5_brightLevel = 0;
-      UpdateDisplay(1);  // Force update of display data, with temporary brightness level
-      a5loadVidBuf_fromOSB();
-      a5_brightLevel = MBlevel[Brightness];
-      UpdateDisplay(1);  // Force update of display data, with new brightness level
-      a5_brightMode = MBmode[Brightness];
+      brightTransitionActive = 1;   // Cross the drive-mode boundary smoothly, in steps
     }
+  }
+
+  if (brightTransitionActive)
+  {
+    advanceBrightnessTransition();
   }
 
   if (VCRmode)

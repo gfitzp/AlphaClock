@@ -60,6 +60,10 @@ The display brightness follows the sun, using the GPS location cached in EEPROM:
 Without a known location (before the first-ever GPS fix), fixed fallback times
 are used: down from 9:00 to 10:00 PM, up from 6:30 to 8:00 AM.
 
+Every brightness change fades smoothly, including across the display's three
+hardware drive-mode boundaries (between manual levels 5/6 and 7/8), where the
+original firmware blinked the display to black before fading back in.
+
 **Setting the daytime brightness:** the clock keeps two brightness values — the
 live display brightness, which the schedule drives, and a saved *daytime*
 brightness, which is the level the morning ramp climbs to and the only one
