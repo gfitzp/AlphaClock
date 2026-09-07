@@ -45,12 +45,18 @@
 
     - Selecting an alarm tone in the menu plays a short preview of it.
 
-    - RTC battery check: at startup, the DS3231's Oscillator Stop Flag is
-      read.  If set, the backup battery failed to keep the RTC running while
-      the clock was unplugged: the display shows "RTC BATT DEAD" instead of
-      the greeting, and repeats it every 10 minutes until any button is
-      pressed.  The flag is cleared whenever the RTC is set from a trusted
-      time (GPS, serial sync, or the buttons).
+    - RTC battery check: the DS3231 cannot report its backup-battery
+      voltage, but its Oscillator Stop Flag latches whenever the chip has
+      lost all power, i.e. the coin cell could not keep it running while
+      the clock was unplugged.  The flag is read at startup.  If set, the
+      display shows "RTC BATT DEAD" instead of the greeting, repeats it
+      every 10 minutes until any button is pressed, and keeps the
+      unset-time blink until a trusted time source (GPS, serial sync, or
+      the buttons) sets the clock.  Setting the RTC from a trusted time
+      also clears the flag, so the warning reappears on a later power-up
+      only if the battery still cannot hold the clock.  Note that
+      replacing the battery itself cuts the RTC's power, so the warning
+      shows once on the first power-up after a battery change.
 
     - Reliability: watchdog timer, hourly (not per-minute) RTC writes,
       and no heap allocation in the GPS parsing path.
