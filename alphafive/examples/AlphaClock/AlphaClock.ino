@@ -50,9 +50,11 @@
       settles at the saved daytime brightness, which the + and - buttons
       then set directly.  Without a known location, fixed fallback windows
       are used (the hour before bedtime down, 6:30-8 AM up).  Until the
-      clock has a trusted time (the blinking unset-time display, e.g. with
-      a dead RTC battery before the first GPS fix), the schedule holds the
-      daytime brightness rather than dimming for a fictional night.
+      clock has a trusted time (the blinking unset-time display seen at
+      power-up with no working RTC, or a dead RTC battery, before the first
+      GPS fix), the schedule holds the daytime brightness rather than
+      dimming for what may be a fictional night; it engages as soon as GPS
+      (or another trusted source) sets the time.
 
       The clock keeps two brightness values: the live display brightness,
       driven by the schedule, and a saved DAYTIME brightness (EEPROM
