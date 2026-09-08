@@ -92,6 +92,12 @@ a constant brightness (it settles at the saved daytime level when you select
 Without a known location (before the first-ever GPS fix), fixed fallback windows
 are used: down over the hour before bedtime, up from 6:30 to 8:00 AM.
 
+Until the clock has a trusted time — the blinking unset-time display you see at
+power-up with no working RTC (or a dead RTC battery) before the first GPS fix —
+the schedule holds the daytime brightness rather than dimming for what may be a
+fictional night. It engages as soon as GPS (or another trusted source) sets the
+time.
+
 Every brightness change fades rather than blinking, including across the
 display's hardware drive-mode boundaries (between manual levels 5/6 and 7/8),
 where the original firmware blanked the display before fading back in. The 5/6

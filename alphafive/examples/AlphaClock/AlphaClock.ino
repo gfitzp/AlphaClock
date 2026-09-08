@@ -49,7 +49,10 @@
       OFF disables the schedule for a constant brightness: the display
       settles at the saved daytime brightness, which the + and - buttons
       then set directly.  Without a known location, fixed fallback windows
-      are used (the hour before bedtime down, 6:30-8 AM up).
+      are used (the hour before bedtime down, 6:30-8 AM up).  Until the
+      clock has a trusted time (the blinking unset-time display, e.g. with
+      a dead RTC battery before the first GPS fix), the schedule holds the
+      daytime brightness rather than dimming for a fictional night.
 
       The clock keeps two brightness values: the live display brightness,
       driven by the schedule, and a saved DAYTIME brightness (EEPROM
@@ -1754,6 +1757,7 @@ void  EndVCRmode()
     RedrawNow_NoFade = 1;
     VCRmode = 0;
     randomSeed(now());  // Either a button press or RTC time
+    lastScheduleMinute = 61;    // Time is trusted now: apply the brightness schedule on the next pass
   }
 }
 
@@ -2111,7 +2115,8 @@ void applySunSchedule(void)
   // Each step uses the display's normal fade, so the ramps feel continuous.
   // A manual brightness change suspends the schedule until the next phase begins.
   // Without a known GPS location, falls back to fixed windows (the hour before
-  // bedtime down, 6:30-8 AM up).  With bedtime OFF, brightness is left alone.
+  // bedtime down, 6:30-8 AM up).  With bedtime OFF, or until the clock has a
+  // trusted time, brightness is held at the daytime setting.
 
   if (minute() == lastScheduleMinute)
   {
@@ -2127,6 +2132,27 @@ void applySunSchedule(void)
   if ((elapsedDays(tNow) != lastSunCalcDayNumber) || (timezones[activeTimezoneIndex()]->locIsDST(tNow) != lastSunCalcDST))
   {
     recomputeSunTimes();
+  }
+
+  if (VCRmode)
+  {
+    // The clock has no trusted time yet (the blinking "unset" display at
+    // power-up without a working RTC, before the first GPS fix).  Dimming
+    // for what may be a fictional night would only look broken, so hold the
+    // daytime brightness and let the schedule take over -- immediately, via
+    // EndVCRmode() -- once a trusted time source sets the clock.
+    int8_t heldBright = (DayBrightness > 0) ? DayBrightness : 1;
+
+    if (Brightness != heldBright)
+    {
+      Brightness = heldBright;
+      UpdateBrightness = 1;
+    }
+
+    schedulePhaseLast = 0;
+    scheduleOverride = 0;
+    lastScheduleTarget = -1;
+    return;
   }
 
   if (BedtimeMinutes == BedtimeOff)
