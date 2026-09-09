@@ -42,9 +42,11 @@
 
     - Brightness schedule: brightness steps down from sunset to bedtime,
       stays at minimum overnight, and steps back up from civil dawn (sun
-      6 degrees below the horizon) to the sun 6 degrees above it, about
-      30-40 minutes after sunrise, so full brightness arrives with real
-      daylight.  Bedtime is set from the "BED TIME" menu item (EEPROM
+      6 degrees below the horizon, roughly half an hour before sunrise)
+      to the sun 6 degrees above it, about 30-40 minutes after sunrise,
+      so full brightness arrives with real daylight rather than at the
+      still-dim moment of sunrise.  The morning ramp is symmetric about
+      sunrise and roughly an hour long.  Bedtime is set from the "BED TIME" menu item (EEPROM
       address 16): OFF, or any half hour of the day.  It is entered in the
       clock's own time, so a clock set to UTC takes its bedtime in UTC
       (10:30 PM EDT = 2:30 AM) and the schedule works across midnight.
