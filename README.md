@@ -12,7 +12,8 @@ The firmware sketch is [`alphafive/examples/AlphaClock/AlphaClock.ino`](alphafiv
 ## Hardware
 
 - Alpha Clock Five, with the MCU upgraded to an **ATmega1284** (16 MHz external clock)
-- Adafruit GPS module connected to `Serial1` (9600 baud)
+- Adafruit Ultimate GPS breakout on `Serial1` (9600 baud) via the J5 header, with its PPS
+  output on J5 pin 6, jumpered on the board from the `J5_6` pad to the `PD4` pad
 - Optional DS3231/ChronoDot RTC on I2C
 
 ## Build environment
@@ -45,6 +46,26 @@ embedded directly in the sketch — no additional library required.
 Install the external libraries into your Arduino libraries folder
 (`~/Documents/Arduino/libraries` on macOS). The `alphafive` library must also be
 present there for the IDE to find it; keep that copy in sync with this repo.
+
+## GPS PPS
+
+The GPS breakout's PPS (pulse-per-second) pin rises at the exact start of each
+UTC second; the RMC sentence that follows describes that second. With PPS wired
+to PD4 (J5 pin 6 → `J5_6` pad → `PD4` pad on the board), the firmware sets the
+clock on the edge itself, using the time from the sentence that preceded it plus
+one second, so the clock's second boundary lands within a few milliseconds of
+true time instead of a few hundred milliseconds late. The pin uses the ATmega's
+internal pull-up; the GPS's 3.3 V output drives it directly. The pin is polled at
+the top of the main loop (about once a millisecond, against a 100 ms pulse)
+rather than by a pin-change interrupt, because the SoftwareSerial library that
+the Adafruit GPS library links in claims every pin-change interrupt vector.
+
+Sanity checks guard the pairing: an edge is only applied if it arrives between
+0.3 and 1.3 seconds after its sentence, and a sentence only arms a sync if it
+came within 0.9 seconds of the last edge. If PPS stops (or was never wired), the
+sentence-timed sync resumes automatically. The once-a-minute serial log reports
+which is in use, e.g. `PPS: aligned (59 edges applied this minute)` or
+`PPS: no signal; using sentence timing`.
 
 ## Configuration menu
 

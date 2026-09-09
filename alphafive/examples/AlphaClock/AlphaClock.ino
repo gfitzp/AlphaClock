@@ -107,6 +107,13 @@
       The check assumes a DS3231; for a DS1307 (where that register is
       just RAM), set RTCIsDS3231 to 0 below to disable it.
 
+    - GPS PPS: the GPS module's pulse-per-second output, brought in on J5
+      pin 6 and jumpered on the board to the PD4 pad, marks the exact start
+      of each second.  The clock is set on that edge (with the time from
+      the following sentence), removing the few hundred milliseconds of
+      sentence latency.  Without a PPS signal the sentence-timed sync is
+      used, as before; the once-a-minute serial log reports which.
+
     - Reliability: watchdog timer, hourly (not per-minute) RTC writes,
       and no heap allocation in the GPS parsing path.
 
@@ -218,6 +225,24 @@ uint32_t last_rtc_update = 0;
 byte rtcSyncedFromGPS = 0;          // Set once the RTC has been written from GPS time
 time_t utc_time, local_time;
 Adafruit_GPS GPS(&GPSSerial);
+
+// GPS PPS (pulse-per-second) input: the GPS module's PPS pin, brought in on J5
+// pin 6 and jumpered to PD4.  The rising edge marks the exact start of each
+// UTC second; the RMC sentence that follows describes that second.  Aligning
+// the clock to the edge removes the few hundred milliseconds of sentence
+// latency from the sentence-timed sync.  The pin is polled at the top of
+// loop() (about once a millisecond; the pulse is 100 ms wide) rather than
+// via a pin-change interrupt, because the SoftwareSerial library that the
+// Adafruit GPS library links in claims every pin-change interrupt vector.
+#define PPSPinMask _BV(PD4)
+byte ppsLevelLast = 0;                  // Pin level at the previous poll, for edge detection
+unsigned long ppsLastEdgeMillis = 0;    // Latest rising edge seen
+time_t ppsNextTime;                     // Local time that the next edge will mark...
+unsigned long ppsArmedMillis;           // ...armed at this millis(), by an RMC sentence with a fix
+byte ppsNextValid = 0;
+unsigned long ppsLastSyncMillis = 0;    // When the clock was last set from a PPS edge
+byte ppsEverSynced = 0;
+byte ppsSyncCount = 0;                  // Edges applied since the last log line
 
 // Note: enabling the GPS feature also enables auto-DST changes.
 // The local time zone is selected automatically from the GPS location
@@ -2322,6 +2347,55 @@ void ForceRender(void)
   // text word, the main redraw path must still draw it this pass.
 }
 
+void ppsPoll(void)
+{
+  // Watch the PPS pin for a rising edge and, if a sentence has armed the time
+  // it marks, set the clock on it.  Called first thing in loop(), so the edge
+  // is normally seen and applied within about a millisecond (up to ~100 ms once
+  // a minute, while the serial log is printing; the next edge corrects that).
+  byte level = (PIND & PPSPinMask) ? 1 : 0;
+  byte rising = (level && (ppsLevelLast == 0));
+  ppsLevelLast = level;
+
+  if (rising == 0)
+  {
+    return;
+  }
+
+  unsigned long edgeMs = millis();
+  ppsLastEdgeMillis = edgeMs;
+
+  if (ppsNextValid == 0)
+  {
+    return;   // No sentence has told us what time this edge marks
+  }
+
+  unsigned long sinceArmed = edgeMs - ppsArmedMillis;
+
+  if (sinceArmed < 300)
+  {
+    return;   // Too soon after the sentence to be its following edge (a glitch): stay armed
+  }
+
+  ppsNextValid = 0;   // One edge per sentence
+
+  if (sinceArmed > 1300)
+  {
+    return;   // Stale: the sentence's following edge was missed
+  }
+
+  setTime(ppsNextTime);
+  ppsLastSyncMillis = edgeMs;
+  ppsEverSynced = 1;
+  ppsSyncCount++;
+}
+
+byte ppsActive(void)
+{
+  // True while PPS edges are being applied (one within the last few seconds)
+  return (ppsEverSynced && ((millis() - ppsLastSyncMillis) < 5000));
+}
+
 void advanceBrightnessTransition(void)
 {
   // Move the display from its current drive mode/level to the target, one
@@ -2389,6 +2463,12 @@ void setup()
   wdt_disable();    // can't leave the watchdog running into setup()
 
   a5Init();  // Required hardware init for Alpha Clock Five library functions
+
+  // GPS PPS input on PD4: input with pull-up (the GPS drives it actively when
+  // present; the pull-up keeps it quiet when nothing is connected).
+  DDRD &= ~PPSPinMask;
+  PORTD |= PPSPinMask;
+
   VCRmode = 1;
   Serial.println("\nHello, World.");
   Serial.println("Alpha Clock Five here, reporting for duty!");
@@ -2563,6 +2643,9 @@ void setup()
 void loop()
 {
   wdt_reset();    // Feed the watchdog: we made it around the loop
+
+  ppsPoll();      // First, so a PPS edge is applied with minimal latency
+
   milliTemp = millis();
   checkButtons();
 
@@ -2602,6 +2685,17 @@ void loop()
         // Convert the Unix epoch time to the local time, using the time zone chosen from the GPS location
         local_time = timezones[activeTimezoneIndex()]->toLocal(utc_time);
         // Serial.print("Local time: "); Serial.println(local_time);
+
+        // Arm the PPS sync: the next PPS edge marks the start of the second after
+        // this sentence's.  Only if PPS edges are arriving and this sentence came
+        // promptly after the last one; a sentence delayed past the next edge would
+        // otherwise be matched to the wrong edge.
+        if ((millis() - ppsLastEdgeMillis) < 900)
+        {
+          ppsNextTime = local_time + 1;
+          ppsArmedMillis = millis();
+          ppsNextValid = 1;
+        }
 
         // Update the time once a minute
         if (millis() - last_gps_update >= 60000)
@@ -2694,8 +2788,21 @@ void loop()
           }
 
           Serial.println(second(local_time));
-          // Set the internal clock
-          setTime(local_time);
+          // Set the internal clock -- unless PPS edges are aligning it, in which
+          // case the sentence-timed set would only add its latency back.
+          if (ppsActive())
+          {
+            Serial.print("PPS: aligned (");
+            Serial.print(ppsSyncCount);
+            Serial.println(" edges applied this minute)");
+          }
+          else
+          {
+            setTime(local_time);
+            Serial.println("PPS: no signal; using sentence timing");
+          }
+
+          ppsSyncCount = 0;
           EndVCRmode();     // GPS time counts as a valid sync: stop the "unset clock" blinking
           Serial.print("Set the time");
 
