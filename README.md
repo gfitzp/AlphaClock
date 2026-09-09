@@ -78,8 +78,9 @@ The display brightness follows the sun, using the GPS location cached in EEPROM:
   reaching the minimum at **bedtime** (set from the `BED TIME` menu item; default
   10:00 PM).
 - **Night:** minimum brightness.
-- **Morning:** starting at astronomical dawn, brightness steps back up, reaching
-  the full daytime level at sunrise.
+- **Morning:** starting at civil dawn (sun 6° below the horizon, roughly half an
+  hour before sunrise), brightness steps back up, reaching the full daytime level
+  at sunrise.
 
 `BED TIME` cycles with **+**/**−** through `OFF`, then every half hour of the day
 from 12:00 AM to 11:30 PM, and back to `OFF`. Bedtime is entered in the clock's

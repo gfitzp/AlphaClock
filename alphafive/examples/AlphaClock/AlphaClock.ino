@@ -41,8 +41,8 @@
       selection.
 
     - Brightness schedule: brightness steps down from sunset to bedtime,
-      stays at minimum overnight, and steps back up from astronomical dawn
-      to sunrise.  Bedtime is set from the "BED TIME" menu item (EEPROM
+      stays at minimum overnight, and steps back up from civil dawn to
+      sunrise.  Bedtime is set from the "BED TIME" menu item (EEPROM
       address 16): OFF, or any half hour of the day.  It is entered in the
       clock's own time, so a clock set to UTC takes its bedtime in UTC
       (10:30 PM EDT = 2:30 AM) and the schedule works across midnight.
@@ -281,7 +281,7 @@ int16_t storedLat100, storedLon100;   // Latitude and longitude, in degrees * 10
 
 int sunriseMinutes = -1;
 int sunsetMinutes = -1;
-int astroDawnMinutes = -1;      // Astronomical dawn: sun 18 degrees below horizon
+int civilDawnMinutes = -1;      // Civil dawn: sun 6 degrees below horizon
 unsigned long lastSunCalcDayNumber = 0;   // elapsedDays() of the last recompute
 byte lastSunCalcDST = 0;                  // DST in effect at the last recompute
 
@@ -399,7 +399,7 @@ const byte ModeCrossingLevel[] = {10, 1};
 // Brightness schedule (all values in minutes past local midnight):
 // In the evening, brightness ramps down step by step, starting at sunset and
 // reaching minimum brightness at bedtime.  In the morning it ramps back up,
-// starting at astronomical dawn and reaching full brightness at sunrise.
+// starting at civil dawn and reaching full brightness at sunrise.
 // Bedtime is set from the configuration menu ("BED TIME"): any half hour of
 // the day, so a clock running on UTC can still dim at a local bedtime (and
 // bedtime may therefore fall after midnight), or OFF for a constant
@@ -409,8 +409,8 @@ unsigned int BedtimeMinutes = a5BedtimeDefault;
 #define BedtimeOffEEValue 48            // EEPROM encoding of OFF (times are 0-47 half-hours)
 #define MinEveningRampMinutes 30        // Shortest evening ramp (if bedtime is at/before sunset)
 #define MaxEveningRampMinutes (12 * 60) // A longer sunset-to-bedtime gap means bedtime is really before sunset
-#define MaxMorningRampMinutes (4 * 60)  // Astronomical twilight never lasts longer than this
-#define DefaultMorningRampMinutes 90    // Morning ramp length if astronomical dawn is unavailable
+#define MaxMorningRampMinutes (4 * 60)  // Civil twilight never lasts longer than this
+#define DefaultMorningRampMinutes 90    // Morning ramp length if civil dawn is unavailable
 #define FallbackDawnMinutes (8 * 60)    // Full brightness by 8:00 AM if sunrise is unknown
 
 // For fade and update management:
@@ -1979,7 +1979,7 @@ void recomputeSunTimes(void)
   {
     sunriseMinutes = -1;
     sunsetMinutes = -1;
-    astroDawnMinutes = -1;
+    civilDawnMinutes = -1;
     return;
   }
 
@@ -1993,14 +1993,14 @@ void recomputeSunTimes(void)
 
   sunriseMinutes = sunEventMinutes(1, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 90.833);
   sunsetMinutes = sunEventMinutes(0, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 90.833);
-  astroDawnMinutes = sunEventMinutes(1, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 108.0);
+  civilDawnMinutes = sunEventMinutes(1, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 96.0);
 
-  Serial.print("Sun times recomputed. Astronomical dawn: ");
+  Serial.print("Sun times recomputed. Civil dawn: ");
 
-  if (astroDawnMinutes >= 0)
+  if (civilDawnMinutes >= 0)
   {
-    Serial.print(astroDawnMinutes / 60);
-    printDigits(astroDawnMinutes % 60);
+    Serial.print(civilDawnMinutes / 60);
+    printDigits(civilDawnMinutes % 60);
   }
   else
   {
@@ -2113,7 +2113,7 @@ void applySunSchedule(void)
   //   Day (full daytime brightness)
   //   Evening ramp: step down from daytime brightness, sunset -> bedtime, reaching minimum at bedtime
   //   Night (minimum brightness)
-  //   Morning ramp: step up from minimum, astronomical dawn -> sunrise, reaching daytime brightness at sunrise
+  //   Morning ramp: step up from minimum, civil dawn -> sunrise, reaching daytime brightness at sunrise
   // Each step uses the display's normal fade, so the ramps feel continuous.
   // A manual brightness change suspends the schedule until the next phase begins.
   // Without a known GPS location, falls back to fixed windows (the hour before
@@ -2196,18 +2196,18 @@ void applySunSchedule(void)
     eveStart = (bedtime + 1440 - eveLen) % 1440;
   }
 
-  // Morning ramp: astronomical dawn to sunrise
+  // Morning ramp: civil dawn to sunrise
   int mornEnd = (sunriseMinutes >= 0) ? sunriseMinutes : FallbackDawnMinutes;
   int mornLen = 0;
 
-  if (astroDawnMinutes >= 0)
+  if (civilDawnMinutes >= 0)
   {
-    mornLen = (mornEnd - astroDawnMinutes + 1440) % 1440;
+    mornLen = (mornEnd - civilDawnMinutes + 1440) % 1440;
   }
 
   if ((mornLen == 0) || (mornLen > MaxMorningRampMinutes))
   {
-    mornLen = DefaultMorningRampMinutes;    // No astronomical twilight (bright high-latitude nights)
+    mornLen = DefaultMorningRampMinutes;    // No civil twilight (polar day/night)
   }
 
   int mornStart = (mornEnd + 1440 - mornLen) % 1440;
@@ -2785,8 +2785,8 @@ void loop()
     }
   }
 
-  // Brightness ramps: down from sunset to bedtime, up from astronomical
-  // dawn to sunrise (fixed fallback times when the GPS location is unknown).
+  // Brightness ramps: down from sunset to bedtime, up from civil dawn to
+  // sunrise (fixed fallback times when the GPS location is unknown).
   applySunSchedule();
 
   if (UpdateBrightness)
