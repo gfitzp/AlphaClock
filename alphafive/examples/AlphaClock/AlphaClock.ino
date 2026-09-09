@@ -41,8 +41,10 @@
       selection.
 
     - Brightness schedule: brightness steps down from sunset to bedtime,
-      stays at minimum overnight, and steps back up from civil dawn to
-      sunrise.  Bedtime is set from the "BED TIME" menu item (EEPROM
+      stays at minimum overnight, and steps back up from civil dawn (sun
+      6 degrees below the horizon) to the sun 6 degrees above it, about
+      30-40 minutes after sunrise, so full brightness arrives with real
+      daylight.  Bedtime is set from the "BED TIME" menu item (EEPROM
       address 16): OFF, or any half hour of the day.  It is entered in the
       clock's own time, so a clock set to UTC takes its bedtime in UTC
       (10:30 PM EDT = 2:30 AM) and the schedule works across midnight.
@@ -59,7 +61,8 @@
       The clock keeps two brightness values: the live display brightness,
       driven by the schedule, and a saved DAYTIME brightness (EEPROM
       address 0), which the morning ramp climbs to.  The + and - buttons
-      set the saved daytime brightness ONLY during the day phase.  At
+      set the saved daytime brightness ONLY during the day phase (from
+      the end of the morning ramp until sunset).  At
       night or during a ramp they adjust the display temporarily, until
       the next phase begins, without changing the daytime setting.
 
@@ -281,7 +284,8 @@ int16_t storedLat100, storedLon100;   // Latitude and longitude, in degrees * 10
 
 int sunriseMinutes = -1;
 int sunsetMinutes = -1;
-int civilDawnMinutes = -1;      // Civil dawn: sun 6 degrees below horizon
+int civilDawnMinutes = -1;      // Civil dawn: sun 6 degrees below the horizon (morning ramp starts)
+int dayStartMinutes = -1;       // Sun 6 degrees above the horizon (morning ramp ends, full daytime brightness)
 unsigned long lastSunCalcDayNumber = 0;   // elapsedDays() of the last recompute
 byte lastSunCalcDST = 0;                  // DST in effect at the last recompute
 
@@ -399,7 +403,8 @@ const byte ModeCrossingLevel[] = {10, 1};
 // Brightness schedule (all values in minutes past local midnight):
 // In the evening, brightness ramps down step by step, starting at sunset and
 // reaching minimum brightness at bedtime.  In the morning it ramps back up,
-// starting at civil dawn and reaching full brightness at sunrise.
+// starting at civil dawn (sun 6 degrees below the horizon) and reaching full
+// brightness when the sun is 6 degrees above it, ~30-40 minutes after sunrise.
 // Bedtime is set from the configuration menu ("BED TIME"): any half hour of
 // the day, so a clock running on UTC can still dim at a local bedtime (and
 // bedtime may therefore fall after midnight), or OFF for a constant
@@ -1980,6 +1985,7 @@ void recomputeSunTimes(void)
     sunriseMinutes = -1;
     sunsetMinutes = -1;
     civilDawnMinutes = -1;
+    dayStartMinutes = -1;
     return;
   }
 
@@ -1994,6 +2000,7 @@ void recomputeSunTimes(void)
   sunriseMinutes = sunEventMinutes(1, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 90.833);
   sunsetMinutes = sunEventMinutes(0, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 90.833);
   civilDawnMinutes = sunEventMinutes(1, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 96.0);
+  dayStartMinutes = sunEventMinutes(1, year(tLocal), month(tLocal), day(tLocal), lat, lon, utcOffsetMin, 84.0);
 
   Serial.print("Sun times recomputed. Civil dawn: ");
 
@@ -2013,6 +2020,18 @@ void recomputeSunTimes(void)
   {
     Serial.print(sunriseMinutes / 60);
     printDigits(sunriseMinutes % 60);
+  }
+  else
+  {
+    Serial.print("none");
+  }
+
+  Serial.print(", day brightness at: ");
+
+  if (dayStartMinutes >= 0)
+  {
+    Serial.print(dayStartMinutes / 60);
+    printDigits(dayStartMinutes % 60);
   }
   else
   {
@@ -2113,7 +2132,7 @@ void applySunSchedule(void)
   //   Day (full daytime brightness)
   //   Evening ramp: step down from daytime brightness, sunset -> bedtime, reaching minimum at bedtime
   //   Night (minimum brightness)
-  //   Morning ramp: step up from minimum, civil dawn -> sunrise, reaching daytime brightness at sunrise
+  //   Morning ramp: step up from minimum, civil dawn -> sun 6 degrees up, reaching daytime brightness there
   // Each step uses the display's normal fade, so the ramps feel continuous.
   // A manual brightness change suspends the schedule until the next phase begins.
   // Without a known GPS location, falls back to fixed windows (the hour before
@@ -2196,8 +2215,11 @@ void applySunSchedule(void)
     eveStart = (bedtime + 1440 - eveLen) % 1440;
   }
 
-  // Morning ramp: civil dawn to sunrise
-  int mornEnd = (sunriseMinutes >= 0) ? sunriseMinutes : FallbackDawnMinutes;
+  // Morning ramp: civil dawn (sun 6 degrees below the horizon) to the sun
+  // 6 degrees above it, so full brightness arrives with real daylight rather
+  // than at the still-dim moment of sunrise.  If the sun never gets 6 degrees
+  // up (polar winter), end at sunrise; with no location, at the fallback time.
+  int mornEnd = (dayStartMinutes >= 0) ? dayStartMinutes : ((sunriseMinutes >= 0) ? sunriseMinutes : FallbackDawnMinutes);
   int mornLen = 0;
 
   if (civilDawnMinutes >= 0)
@@ -2212,7 +2234,7 @@ void applySunSchedule(void)
 
   int mornStart = (mornEnd + 1440 - mornLen) % 1440;
 
-  // Day: sunrise to sunset
+  // Day: from the end of the morning ramp to sunset
   int dayLen = (eveStart - mornEnd + 1440) % 1440;
 
   int nowMin = hour() * 60 + minute();
@@ -2785,8 +2807,8 @@ void loop()
     }
   }
 
-  // Brightness ramps: down from sunset to bedtime, up from civil dawn to
-  // sunrise (fixed fallback times when the GPS location is unknown).
+  // Brightness ramps: down from sunset to bedtime, up from civil dawn to the
+  // sun 6 degrees up (fixed fallback times when the GPS location is unknown).
   applySunSchedule();
 
   if (UpdateBrightness)

@@ -80,7 +80,9 @@ The display brightness follows the sun, using the GPS location cached in EEPROM:
 - **Night:** minimum brightness.
 - **Morning:** starting at civil dawn (sun 6° below the horizon, roughly half an
   hour before sunrise), brightness steps back up, reaching the full daytime level
-  at sunrise.
+  when the sun is 6° *above* the horizon — about 30–40 minutes after sunrise — so
+  full brightness arrives with real daylight rather than at the still-dim moment
+  of sunrise. The morning ramp is symmetric about sunrise, roughly an hour long.
 
 `BED TIME` cycles with **+**/**−** through `OFF`, then every half hour of the day
 from 12:00 AM to 11:30 PM, and back to `OFF`. Bedtime is entered in the clock's
@@ -109,7 +111,7 @@ brightest drive mode cannot go dim enough to match the top of the one below it.
 live display brightness, which the schedule drives, and a saved *daytime*
 brightness, which is the level the morning ramp climbs to and the only one
 stored in EEPROM. The **+** and **−** buttons set the saved daytime brightness
-**only during the day phase** (between sunrise and sunset). Pressing them at
+**only during the day phase** (from the end of the morning ramp until sunset). Pressing them at
 night or during a ramp still adjusts the display immediately, but the change
 is temporary: it lasts until the next phase begins, and it does not alter the
 daytime setting. To change how bright the clock is during the day, adjust it
